@@ -1,0 +1,66 @@
+parameter,value,notes
+population,,
+births,3000000,
+epidemiology,,
+inc,0.0054,rotavirus deaths of 5.4 per 1000 live births
+inp,0.02,5-year probability of inpatient visit for rotavirus diarrhea
+out,0.26,5-year probability of outpatient visit for rotavirus diarrhea
+eff,0.49,effectiveness of rotavirus vaccine 
+cov,0.7,coverage of rotavirus vaccine
+cost,,
+c_dose,5,cost per vaccine dose
+c_sys,0.25,incremental system cost per dose
+c_inp,60,provider cost for inpatient diarrhea
+c_out,10,provider cost for outpatient diarrhea
+n,2,number of vaccine doses
+ecea_specific,,
+population per income quintile,,
+pop_1,600000,
+pop_2,600000,
+pop_3,600000,
+pop_4,600000,
+pop_5,600000,
+risk index of rotavirus mortality per quintile,,
+r1,1.3,
+r2,1.2,
+r3,1,
+r4,0.9,
+r5,0.5,
+5-year probability of inpatient visit for rotavirus diarrhea per quintile,,
+inp1,0.02,
+inp2,0.02,
+inp3,0.02,
+inp4,0.03,
+inp5,0.03,
+5-year probability of outpatient visit for rotavirus diarrhea per quintile,,
+out1,0.18,
+out2,0.19,
+out3,0.27,
+out4,0.27,
+out5,0.38,
+baseline coverage per quintile,,
+cov_1,0.7,
+cov_2,0.7,
+cov_3,0.7,
+cov_4,0.7,
+cov_5,0.7,
+provider vaccine cost for dose and system,,
+remains the same,,
+oop cost,,
+oop_inp1,40,oop unit cost per inpatient visit
+oop_inp2,45,"In other words, treatment is entirely covered out of pocket"
+oop_inp3,50,
+oop_inp4,60,
+oop_inp5,70,
+oop cost,,
+oop_out1,5,oop unit cost per outpatient visit
+oop_out2,7,"In other words, treatment is entirely covered out of pocket"
+oop_out3,10,
+oop_out4,12,
+oop_out5,15,
+income,,
+mean,500,mean income in the population
+gini,0.3,gini coefficient
+catastrophic,,
+th,0.1,threshold of 10% of income
+pov,200,poverty line of $200 annual

@@ -1,0 +1,45 @@
+parameter,value,notes
+population,,
+pop,1000000,
+epidemiology,,
+inc,0.001,"average incidence of TB of 100 per 100,000"
+cfr,0.32,case fatality ratio of untreated TB
+eff,0.9,effectiveness of recommended DOTS treatment 
+cost,,
+c,100,unit cost per DOTS treatment 
+cov,0.7,baseline coverage of DOTS or case detection of sputum smear-positive
+ecea_specific,,
+population per income quintile,,
+pop_1,200000,
+pop_2,200000,
+pop_3,200000,
+pop_4,200000,
+pop_5,200000,
+incidence per quintile,,
+inc_1,0.0018,"180 per 100,000"
+inc_2,0.0014,"140 per 100,000"
+inc_3,0.001,"100 per 100,000"
+inc_4,0.0006,"60 per 100,000"
+inc_5,0.0002,"20 per 100,000"
+baseline coverage per quintile,,
+cov_1,0.47,
+cov_2,0.59,
+cov_3,0.71,
+cov_4,0.83,
+cov_5,0.95,
+provider cost,,
+c=100,,remains the same
+oop cost,,
+oop_1,100,oop unit cost per DOTS treatment
+oop_2,100,"In other words, DOTS is entirely covered out of pocket"
+oop_3,100,
+oop_4,100,
+oop_5,100,
+income,,
+mean,1500,mean income in the population
+min,200,minimum income in the population
+max,20000,maximum income in the population
+gini,0.33,gini coefficient
+catastrophic,,
+th,0.1,threshold of 10% of income
+pov,500,poverty line of $500 annual
