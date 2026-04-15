@@ -1,0 +1,39 @@
+Parameters,Value,notes
+population ,,
+pop,"100,000",hypothetical cohort total population
+population per income quintile,,
+pop_1,"20,000",
+pop_2,"20,000",
+pop_3,"20,000",
+pop_4,"20,000",
+pop_5,"20,000",
+prevalence of DR per quintile,,
+dr_1,0.011865325,
+dr_2,0.013617175,
+dr_3,0.01575655,
+dr_4,0.0182512,
+dr_5,0.0202993,
+VTDR cases among DR cases,P(VTDR|DR)_i ,cases of VTDR among DR
+vtdr_dr_1,0.3101186862,
+vtdr_dr_2,0.3138566553,
+vtdr_dr_3,0.3171421409,
+vtdr_dr_4,0.319807136,
+vtdr_dr_5,0.3224542718,
+cov_b,0.1,baseline screening coverage 
+cov_inv,0.75,intervention screening coverage
+primary care utilization,,
+pcu_1,0.365,
+pcu_2,0.337,
+pcu_3,0.291,
+pcu_4,0.209,
+pcu_5,0.094,
+sensitivty (usual care),,
+sens_b,1,sensitivity of test during usual care
+sensitivty(intervention),,
+sens_inv,0.89,sensitivity of AI supported screening
+loss to follow up at referral ,,
+lfu_referral,0.44,
+loss to follow up at treatment,,
+lfu_treat,0.275,
+efectiveness of treatment,,
+eff_blind,0.058,risk VTDR to blindness reduced due to treatment
