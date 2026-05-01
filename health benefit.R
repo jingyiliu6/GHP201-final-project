@@ -1,11 +1,11 @@
 
-#disease burden calculation and disaggregation 
+#health benefit calculation and disaggregation 
 #cases of DR detected and cases of blindness averted due to intervention
 
-input <- read.csv("Input table.csv")
+input <- read.csv("input table new.csv")
 input$Value <- as.numeric(gsub(",", "", input$Value)) 
 
-set.seed(123)
+
 
 get_val <- function(name) input$Value[input$Parameters == name]
 quintiles <- 1:5
@@ -33,7 +33,6 @@ dr_inv <- sapply(quintiles, function(i) {
 dr_detected <- dr_inv - dr_baseline
 
 library(ggplot2)
-
 plot_dr <- data.frame(
   quintile = factor(c("I","II","III","IV","V"), levels=c("I","II","III","IV","V")),
   dr_detected = dr_detected)
@@ -70,6 +69,7 @@ blind_inv <-  sapply(quintiles, function(i) {
     (1 - get_val("lfu_referral")) *
     (1 - get_val("lfu_treat")) *
     get_val(paste0("vtdr_dr_", i)) *
+    (1 - get_val("vtdr_reduction"))*
     get_val("eff_blind")})
 
 #1.3 estimating blindness cases averted per quintile and plot
