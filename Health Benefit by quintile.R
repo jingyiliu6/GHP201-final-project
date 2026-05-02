@@ -1,5 +1,5 @@
 
-#health benefit calculation and disaggregation 
+#health benefit calculation and disaggregation by quintile 
 #cases of DR detected and cases of blindness averted due to intervention
 
 input <- read.csv("input table new.csv")
@@ -38,7 +38,7 @@ plot_dr <- data.frame(
   dr_detected = dr_detected)
 
 ggplot(plot_dr, aes(x=quintile, y=dr_detected)) +
-  geom_col(fill="red2", width=0.6)+
+  geom_col(fill="darkturquoise", width=0.6)+
   labs(title="Additional DR Cases Detected Due to Intervention",
        x="Income Quintile (Poorest to Richest)",
        y="Additional DR Cases Detected") +
@@ -80,10 +80,20 @@ plot_blind <- data.frame(
   blind_averted = blind_averted)
 
 ggplot(plot_blind, aes(x=quintile, y=blind_averted)) +
-  geom_col(fill="red2", width=0.6)+
+  geom_col(fill="darkturquoise", width=0.6)+
   labs(title="Blindness Cases Averted Due to Intervention",
        x="Income Quintile (Poorest to Richest)",
        y="Blindness Cases Averted") +
   theme_classic()+
   theme(plot.title=element_text(hjust=0.5, face="bold"))
 
+#dashboard
+
+health_benefit_dash <- as.data.frame(rbind(
+  round(dr_detected, 1),
+  round(blind_averted, 3)
+))
+colnames(health_benefit_dash) <- c("I","II","III","IV","V")
+rownames(health_benefit_dash) <- c("Additional DR Cases Detected (per 100,000)",
+                                   "Blindness Cases Averted (per 100,000)")
+print(health_benefit_dash)

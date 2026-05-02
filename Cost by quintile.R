@@ -145,7 +145,7 @@ che_25_additional <- che_25_inv - che_25_baseline
 
 #graphs
 ggplot(plot_dr, aes(x=quintile, y=che_10_additional)) +
-  geom_col(fill="red2", width=0.6)+
+  geom_col(fill="coral1", width=0.6)+
   labs(title="Additional CHE Cases (10% threshold) Due to Intervention",
        x="Income Quintile (Poorest to Richest)",
        y="Additional CHE Cases") +
@@ -153,7 +153,7 @@ ggplot(plot_dr, aes(x=quintile, y=che_10_additional)) +
   theme(plot.title=element_text(hjust=0.5, face="bold"))
 
 ggplot(plot_dr, aes(x=quintile, y=che_25_additional)) +
-  geom_col(fill="red2", width=0.6)+
+  geom_col(fill="coral1", width=0.6)+
   labs(title="Additional CHE Cases (25% threshold) Due to Intervention",
        x="Income Quintile (Poorest to Richest)",
        y="Additional CHE Cases") +
@@ -162,7 +162,7 @@ ggplot(plot_dr, aes(x=quintile, y=che_25_additional)) +
 
 #section 2.3 impoverishment due to medical expense 
 #annual poverty 
-pov_annual <- get_val("pov") * 365
+pov_annual <- 180 * 365
 
 #consumption after OOP
 post_oop_consumption_baseline <- annual_consumption_q - per_person_oop_baseline
@@ -182,10 +182,27 @@ impov_inv      <- treated_inv * impov_cases_inv
 impov_additional <- impov_inv - impov_baseline
 
 ggplot(plot_dr, aes(x=quintile, y=impov_additional)) +
-  geom_col(fill="red2", width=0.6)+
+  geom_col(fill="coral1", width=0.6)+
   labs(title="Additional Impoverishment Cases Due to Intervention",
        x="Income Quintile (Poorest to Richest)",
        y="Additional Impoverishment Cases") +
   theme_classic()+
   theme(plot.title=element_text(hjust=0.5, face="bold"))
 
+#dashboard
+health_benefit_dash <- as.data.frame(rbind(
+  round(OOP_med_additional, 1),
+  round(OOP_total_additional, 1),
+  round(che_10_additional, 1),
+  round(che_25_additional, 1),
+  round(impov_additional, 1)
+))
+colnames(health_benefit_dash) <- c("I","II","III","IV","V")
+rownames(health_benefit_dash) <- c(
+  "Additional Direct Medical OOP due to Intervention",
+  "Additional Total OOP due to Intervention",
+  "Additional CHE Cases (10% threshold)",
+  "Additional CHE Cases (25% threshold)",
+  "Additional Impoverishment Cases"
+)
+print(health_benefit_dash)
