@@ -2,6 +2,7 @@ rm(list = ls())
 input <- read.csv("input table new.csv")
 input$Parameters <- trimws(input$Parameters)
 input$Value <- as.numeric(gsub(",", "", input$Value)) 
+hces <- read.csv("hces_simulated_100k_households.csv", stringsAsFactors = FALSE)
 get_val <- function(name) input$Value[input$Parameters == name]
 scale_to_target_pop <- get_val("target_pop") / get_val("pop")
 plain_number <- function(x) format(round(x, 0), scientific = FALSE, trim = TRUE)
@@ -16,26 +17,37 @@ sectors <- c("u", "r")   # u = urban, r = rural
 sector_labels <- c("Urban", "Rural")
 get_pcu_sector <- function(s) get_val(paste0("pcu_", s)) / 100
 get_insurance_coverage_sector <- function(s) get_val(paste0("ins_cov_", s))
-get_hh_size_sector <- function(s) {
-  if (s == "u") {
-    get_val("hh_size_urban")
-  } else {
-    get_val("hh_size_rural")
+required_hces_cols <- c("sector", "hh_size", "hh_usual_cons_exp_mnth", "household_quintile")
+missing_hces_cols <- setdiff(required_hces_cols, names(hces))
+if (length(missing_hces_cols) > 0) {
+  stop("Missing required columns in hces_simulated_100k_households.csv: ",
+       paste(missing_hces_cols, collapse = ", "))
+}
+hces$sector_raw <- trimws(as.character(hces$sector))
+hces$sector_code <- ifelse(tolower(hces$sector_raw) %in% c("1", "r", "rural"),
+                           "r",
+                           ifelse(tolower(hces$sector_raw) %in% c("2", "u", "urban"),
+                                  "u",
+                                  NA))
+hces$hh_consumption_annual <- as.numeric(hces$hh_usual_cons_exp_mnth) * 12
+hces$household_quintile <- as.integer(hces$household_quintile)
+hces <- hces[!is.na(hces$sector_code) &
+               !is.na(hces$hh_consumption_annual) &
+               hces$hh_consumption_annual > 0 &
+               hces$household_quintile %in% 1:5, ]
+get_hces_sector <- function(s) {
+  households <- hces[hces$sector_code == s, ]
+  if (nrow(households) == 0) {
+    stop("No simulated households found for sector = ", s)
   }
+  households
 }
-fractiles <- c("0_5", "5_10", "10_20", "20_30", "30_40", "40_50",
-               "50_60", "60_70", "70_80", "80_90", "90_95", "95_100")
-fractile_shares <- sapply(fractiles, function(f) get_val(paste0("frac_share_", f)))
-get_mpce_fractiles <- function(s) {
-  sapply(fractiles, function(f) get_val(paste0("mpce_", s, "_", f)))
+household_threshold_rate <- function(oop, households, threshold) {
+  mean(oop > threshold * households$hh_consumption_annual)
 }
-weighted_threshold_rate <- function(oop, annual_consumption, threshold) {
-  sum(fractile_shares * as.integer(oop > threshold * annual_consumption))
-}
-weighted_impov_rate <- function(oop, annual_consumption, poverty_line) {
-  sum(fractile_shares *
-        as.integer(annual_consumption >= poverty_line &
-                     annual_consumption - oop < poverty_line))
+household_impov_rate <- function(oop, households, poverty_line) {
+  mean(households$hh_consumption_annual >= poverty_line &
+         households$hh_consumption_annual - oop < poverty_line)
 }
 insured_med_oop <- function(oop_dr, oop_vtdr, vtdr_share,
                             insurance_coverage,
@@ -185,31 +197,29 @@ per_person_oop_inv_ur <- sapply(sectors, function(s) {
   med + nonmed
 })
 
-# Annual household consumption by sector fractile
-annual_consumption_ur <- lapply(sectors, function(s) {
-  get_mpce_fractiles(s) * 12 * get_hh_size_sector(s)
-})
-names(annual_consumption_ur) <- sectors
+# Simulated household consumption distributions by sector
+households_ur <- lapply(sectors, get_hces_sector)
+names(households_ur) <- sectors
 
 # CHE thresholds
 th1 <- get_val("th1")   # 0.10
 th2 <- get_val("th2")   # 0.25
 
-# CHE rates per sector, weighted across MPCE fractiles
+# CHE rates per sector, calculated across simulated households
 che_10_rate_baseline_ur <- sapply(sectors, function(s) {
-  weighted_threshold_rate(per_person_oop_baseline_ur[s], annual_consumption_ur[[s]], th1)
+  household_threshold_rate(per_person_oop_baseline_ur[s], households_ur[[s]], th1)
 })
 che_25_rate_baseline_ur <- sapply(sectors, function(s) {
-  weighted_threshold_rate(per_person_oop_baseline_ur[s], annual_consumption_ur[[s]], th2)
+  household_threshold_rate(per_person_oop_baseline_ur[s], households_ur[[s]], th2)
 })
 che_10_rate_inv_ur <- sapply(sectors, function(s) {
-  weighted_threshold_rate(per_person_oop_inv_ur[s], annual_consumption_ur[[s]], th1)
+  household_threshold_rate(per_person_oop_inv_ur[s], households_ur[[s]], th1)
 })
 che_25_rate_inv_ur <- sapply(sectors, function(s) {
-  weighted_threshold_rate(per_person_oop_inv_ur[s], annual_consumption_ur[[s]], th2)
+  household_threshold_rate(per_person_oop_inv_ur[s], households_ur[[s]], th2)
 })
 
-# Total CHE cases = treated patients x weighted fractile CHE rate
+# Total CHE cases = treated patients x simulated-household CHE rate
 che_10_baseline_ur <- treated_baseline_ur * che_10_rate_baseline_ur
 che_25_baseline_ur <- treated_baseline_ur * che_25_rate_baseline_ur
 che_10_inv_ur      <- treated_inv_ur * che_10_rate_inv_ur
@@ -255,15 +265,15 @@ ggplot(plot_che_ur, aes(x = sector, y = che_25_additional)) +
 # Annual household poverty line from a daily household poverty line
 pov_annual <- get_val("pov") * 365
 
-# Impoverishment rates per sector, weighted across MPCE fractiles
+# Impoverishment rates per sector, calculated across simulated households
 impov_rate_baseline_ur <- sapply(sectors, function(s) {
-  weighted_impov_rate(per_person_oop_baseline_ur[s], annual_consumption_ur[[s]], pov_annual)
+  household_impov_rate(per_person_oop_baseline_ur[s], households_ur[[s]], pov_annual)
 })
 impov_rate_inv_ur <- sapply(sectors, function(s) {
-  weighted_impov_rate(per_person_oop_inv_ur[s], annual_consumption_ur[[s]], pov_annual)
+  household_impov_rate(per_person_oop_inv_ur[s], households_ur[[s]], pov_annual)
 })
 
-# Total impoverishment cases per sector = treated patients x weighted fractile rate
+# Total impoverishment cases per sector = treated patients x simulated-household rate
 impov_baseline_ur <- treated_baseline_ur * impov_rate_baseline_ur
 impov_inv_ur      <- treated_inv_ur * impov_rate_inv_ur
 
@@ -419,12 +429,12 @@ run_insurance_sensitivity_sector <- function(
       med + nonmed
     })
     
-    che_10_b <- sapply(sectors, function(s) weighted_threshold_rate(oop_baseline[s], annual_consumption_ur[[s]], th1))
-    che_25_b <- sapply(sectors, function(s) weighted_threshold_rate(oop_baseline[s], annual_consumption_ur[[s]], th2))
-    che_10_i <- sapply(sectors, function(s) weighted_threshold_rate(oop_inv[s], annual_consumption_ur[[s]], th1))
-    che_25_i <- sapply(sectors, function(s) weighted_threshold_rate(oop_inv[s], annual_consumption_ur[[s]], th2))
-    impov_b <- sapply(sectors, function(s) weighted_impov_rate(oop_baseline[s], annual_consumption_ur[[s]], pov_annual))
-    impov_i <- sapply(sectors, function(s) weighted_impov_rate(oop_inv[s], annual_consumption_ur[[s]], pov_annual))
+    che_10_b <- sapply(sectors, function(s) household_threshold_rate(oop_baseline[s], households_ur[[s]], th1))
+    che_25_b <- sapply(sectors, function(s) household_threshold_rate(oop_baseline[s], households_ur[[s]], th2))
+    che_10_i <- sapply(sectors, function(s) household_threshold_rate(oop_inv[s], households_ur[[s]], th1))
+    che_25_i <- sapply(sectors, function(s) household_threshold_rate(oop_inv[s], households_ur[[s]], th2))
+    impov_b <- sapply(sectors, function(s) household_impov_rate(oop_baseline[s], households_ur[[s]], pov_annual))
+    impov_i <- sapply(sectors, function(s) household_impov_rate(oop_inv[s], households_ur[[s]], pov_annual))
     
     data.frame(
       coverage_med_dr_insured = cov_dr,
