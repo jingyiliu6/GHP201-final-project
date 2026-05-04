@@ -5,7 +5,15 @@ rm(list = ls())
 input <- read.csv("input table new.csv")
 input$Parameters <- trimws(input$Parameters)
 input$Value <- as.numeric(gsub(",", "", input$Value))
-hces <- read.csv("hces_simulated_100k_households.csv", stringsAsFactors = FALSE)
+hces_file_candidates <- c("hces_simulated_1m_households.csv",
+                          "hces_simulated_100k_households.csv")
+hces_file <- hces_file_candidates[file.exists(hces_file_candidates)][1]
+if (is.na(hces_file)) {
+  stop("Could not find a simulated HCES household CSV file.")
+}
+hces <- read.csv(hces_file, stringsAsFactors = FALSE)
+cat("Using simulated HCES household file:", hces_file, "\n")
+cat("Simulated household rows loaded:", nrow(hces), "\n")
 
 get_val <- function(name) input$Value[input$Parameters == name]
 quintiles <- 1:5
@@ -17,7 +25,7 @@ cost_label <- function(x) paste0("INR ", round(x / 1000000, 0), "M")
 required_hces_cols <- c("sector", "hh_size", "hh_usual_cons_exp_mnth", "household_quintile")
 missing_hces_cols <- setdiff(required_hces_cols, names(hces))
 if (length(missing_hces_cols) > 0) {
-  stop("Missing required columns in hces_simulated_100k_households.csv: ",
+  stop("Missing required columns in ", hces_file, ": ",
        paste(missing_hces_cols, collapse = ", "))
 }
 
@@ -260,7 +268,7 @@ make_che_plot <- function(results) {
   plot_che_q$label_vjust <- ifelse(plot_che_q$value >= 0, -0.35, 1.25)
   
   ggplot(plot_che_q, aes(x = quintile, y = value)) +
-    geom_col(fill = "#f58220", width = 0.6) +
+    geom_col(fill = "#ffcc20", width = 0.6) +
     geom_text(aes(label = label, vjust = label_vjust), size = 3) +
     scale_y_continuous(expand = expansion(mult = c(0.18, 0.18))) +
     labs(title = paste0("Additional CHE Cases (10%): ",
@@ -284,7 +292,7 @@ make_ihe_plot <- function(results) {
   plot_ihe_q$label_vjust <- ifelse(plot_ihe_q$value >= 0, -0.35, 1.25)
   
   ggplot(plot_ihe_q, aes(x = quintile, y = value)) +
-    geom_col(fill = "#ffcc00", width = 0.6) +
+    geom_col(fill = "#ffcc20", width = 0.6) +
     geom_text(aes(label = label, vjust = label_vjust), size = 3) +
     scale_y_continuous(expand = expansion(mult = c(0.18, 0.18))) +
     labs(title = paste0("Change in Impoverishment Cases: ",
@@ -321,12 +329,12 @@ library(ggplot2)
 results_0 <- calculate_quintile_results(
   coverage_med_dr_insured = 0,
   coverage_med_vtdr_insured = 0,
-  scenario_label = "0% Reimbersement"
+  scenario_label = "0% Reimbursement"
 )
 results_100 <- calculate_quintile_results(
   coverage_med_dr_insured = 1,
   coverage_med_vtdr_insured = 1,
-  scenario_label = "100% Reimbersement"
+  scenario_label = "100% Reimbursement"
 )
 
 print(make_dashboard(results_0))

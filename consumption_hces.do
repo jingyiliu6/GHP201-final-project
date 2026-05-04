@@ -27,7 +27,7 @@ Method:
       replacement, proportional to household weight within sector.
 */
 
-local n_sim = 100000
+local n_sim = 1000000
 
 tempfile level01_hh level15_hh analytic_hh
 

@@ -3,7 +3,15 @@ rm(list = ls())
 input <- read.csv("input table new.csv")
 input$Parameters <- trimws(input$Parameters)
 input$Value <- as.numeric(gsub(",", "", input$Value))
-hces <- read.csv("hces_simulated_100k_households.csv", stringsAsFactors = FALSE)
+hces_file_candidates <- c("hces_simulated_1m_households.csv",
+                          "hces_simulated_100k_households.csv")
+hces_file <- hces_file_candidates[file.exists(hces_file_candidates)][1]
+if (is.na(hces_file)) {
+  stop("Could not find a simulated HCES household CSV file.")
+}
+hces <- read.csv(hces_file, stringsAsFactors = FALSE)
+cat("Using simulated HCES household file:", hces_file, "\n")
+cat("Simulated household rows loaded:", nrow(hces), "\n")
 
 get_val <- function(name) input$Value[input$Parameters == name]
 scale_to_target_pop <- get_val("target_pop") / get_val("pop")
@@ -23,7 +31,7 @@ get_insurance_coverage_sector <- function(s) get_val(paste0("ins_cov_", s))
 required_hces_cols <- c("sector", "hh_size", "hh_usual_cons_exp_mnth", "household_quintile")
 missing_hces_cols <- setdiff(required_hces_cols, names(hces))
 if (length(missing_hces_cols) > 0) {
-  stop("Missing required columns in hces_simulated_100k_households.csv: ",
+  stop("Missing required columns in ", hces_file, ": ",
        paste(missing_hces_cols, collapse = ", "))
 }
 
@@ -253,7 +261,7 @@ make_burden_plot <- function(results) {
   ggplot(plot_burden_ur, aes(x = sector, y = value, fill = sector)) +
     geom_col(width = 0.62) +
     geom_text(aes(label = label, vjust = label_vjust), size = 3) +
-    scale_fill_manual(values = c("Urban" = "#f58220", "Rural" = "#be1818")) +
+    scale_fill_manual(values = c("Urban" = "#f58220", "Rural" = "#c75301")) + 
     scale_y_continuous(expand = expansion(mult = c(0.18, 0.18))) +
     facet_wrap(~ category, scales = "free_y", nrow = 1) +
     labs(title = paste0("Rural vs Urban Burden: ", results$scenario_label),
