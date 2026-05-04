@@ -41,7 +41,7 @@ plot_dr <- data.frame(
   dr_detected = dr_detected_target)
 
 ggplot(plot_dr, aes(x=quintile, y=dr_detected)) +
-  geom_col(fill="orangered4", width=0.6)+
+  geom_col(fill="#025e8d", width=0.6)+
   geom_text(aes(label = plain_number(dr_detected)), vjust = -0.4, size = 3) +
   scale_y_continuous(labels = plain_number,
                      expand = expansion(mult = c(0, 0.1))) +
@@ -87,7 +87,7 @@ plot_blind <- data.frame(
   blind_averted = blind_averted_target)
 
 ggplot(plot_blind, aes(x=quintile, y=blind_averted)) +
-  geom_col(fill="orangered", width=0.6)+
+  geom_col(fill="#0088cc", width=0.6)+
   geom_text(aes(label = plain_number(blind_averted)), vjust = -0.4, size = 3) +
   scale_y_continuous(labels = plain_number,
                      expand = expansion(mult = c(0, 0.1))) +

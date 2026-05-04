@@ -42,7 +42,7 @@ plot_dr_ur <- data.frame(
 )
 
 ggplot(plot_dr_ur, aes(x = sector, y = dr_detected)) +
-  geom_col(fill = "darkturquoise", width = 0.6) +
+  geom_col(fill = "#c5e0f4", color = "black", width = 0.6) +
   geom_text(aes(label = plain_number(dr_detected)), vjust = -0.4, size = 3) +
   scale_y_continuous(labels = plain_number,
                      expand = expansion(mult = c(0, 0.1))) +
@@ -92,7 +92,7 @@ plot_blind_ur <- data.frame(
 )
 
 ggplot(plot_blind_ur, aes(x = sector, y = blind_averted)) +
-  geom_col(fill = "darkturquoise", width = 0.6) +
+  geom_col(fill = "#f0f7fc", color = "black", width = 0.6) +
   geom_text(aes(label = plain_number(blind_averted)), vjust = -0.4, size = 3) +
   scale_y_continuous(labels = plain_number,
                      expand = expansion(mult = c(0, 0.1))) +

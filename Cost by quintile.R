@@ -234,8 +234,8 @@ make_oop_plot <- function(results) {
     geom_text(aes(label = label, vjust = label_vjust),
               position = position_dodge(width = 0.75),
               size = 3) +
-    scale_fill_manual(values = c("Direct Medical OOP" = "orangered",
-                                 "Total OOP" = "orangered4")) +
+    scale_fill_manual(values = c("Direct Medical OOP" = "#f58220",
+                                 "Total OOP" = "#b74616")) +
     scale_y_continuous(expand = expansion(mult = c(0.18, 0.18))) +
     labs(title = paste0("Additional OOP Due to Intervention by Quintile: ",
                         results$scenario_label),
@@ -260,10 +260,10 @@ make_che_plot <- function(results) {
   plot_che_q$label_vjust <- ifelse(plot_che_q$value >= 0, -0.35, 1.25)
   
   ggplot(plot_che_q, aes(x = quintile, y = value)) +
-    geom_col(fill = "lightblue", width = 0.6) +
+    geom_col(fill = "#f58220", width = 0.6) +
     geom_text(aes(label = label, vjust = label_vjust), size = 3) +
     scale_y_continuous(expand = expansion(mult = c(0.18, 0.18))) +
-    labs(title = paste0("Additional CHE Cases (10% threshold) Due to Intervention: ",
+    labs(title = paste0("Additional CHE Cases (10%): ",
                         results$scenario_label),
          x = "Income Quintile (Poorest to Richest)",
          y = "Additional CHE Cases") +
@@ -284,10 +284,10 @@ make_ihe_plot <- function(results) {
   plot_ihe_q$label_vjust <- ifelse(plot_ihe_q$value >= 0, -0.35, 1.25)
   
   ggplot(plot_ihe_q, aes(x = quintile, y = value)) +
-    geom_col(fill = "lightblue", width = 0.6) +
+    geom_col(fill = "#ffcc00", width = 0.6) +
     geom_text(aes(label = label, vjust = label_vjust), size = 3) +
     scale_y_continuous(expand = expansion(mult = c(0.18, 0.18))) +
-    labs(title = paste0("Change in Impoverishment Cases Due to Intervention: ",
+    labs(title = paste0("Change in Impoverishment Cases: ",
                         results$scenario_label),
          x = "Income Quintile (Poorest to Richest)",
          y = "Change in Impoverishment Cases") +
@@ -308,9 +308,9 @@ make_dashboard <- function(results) {
   ))
   colnames(dash) <- quintile_labels
   rownames(dash) <- c(
-    paste0("Additional Direct Medical OOP due to Intervention - ", results$scenario_label),
-    paste0("Additional Total OOP due to Intervention - ", results$scenario_label),
-    paste0("Additional CHE Cases (10% threshold) - ", results$scenario_label),
+    paste0("Additional Direct Medical OOP - ", results$scenario_label),
+    paste0("Additional Total OOP - ", results$scenario_label),
+    paste0("Additional CHE Cases (10%) - ", results$scenario_label),
     paste0("Change in Impoverishment Cases - ", results$scenario_label)
   )
   dash
@@ -321,12 +321,12 @@ library(ggplot2)
 results_0 <- calculate_quintile_results(
   coverage_med_dr_insured = 0,
   coverage_med_vtdr_insured = 0,
-  scenario_label = "0% DR/VTDR Treatment Coverage"
+  scenario_label = "0% Reimbersement"
 )
 results_100 <- calculate_quintile_results(
   coverage_med_dr_insured = 1,
   coverage_med_vtdr_insured = 1,
-  scenario_label = "100% DR/VTDR Treatment Coverage"
+  scenario_label = "100% Reimbersement"
 )
 
 print(make_dashboard(results_0))

@@ -253,7 +253,7 @@ make_burden_plot <- function(results) {
   ggplot(plot_burden_ur, aes(x = sector, y = value, fill = sector)) +
     geom_col(width = 0.62) +
     geom_text(aes(label = label, vjust = label_vjust), size = 3) +
-    scale_fill_manual(values = c("Urban" = "#0067B9", "Rural" = "lightcoral")) +
+    scale_fill_manual(values = c("Urban" = "#f58220", "Rural" = "#be1818")) +
     scale_y_continuous(expand = expansion(mult = c(0.18, 0.18))) +
     facet_wrap(~ category, scales = "free_y", nrow = 1) +
     labs(title = paste0("Rural vs Urban Burden: ", results$scenario_label),
