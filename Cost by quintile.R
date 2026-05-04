@@ -1,13 +1,63 @@
 #cost: additional OOP incurred to patients by quintile and by rural urban 
 #catastrophic health expenditure cases 
-
+rm(list = ls())
 
 input <- read.csv("input table new.csv")
+input$Parameters <- trimws(input$Parameters)
 input$Value <- as.numeric(gsub(",", "", input$Value)) 
 
 get_val <- function(name) input$Value[input$Parameters == name]
 quintiles <- 1:5
-
+scale_to_target_pop <- get_val("target_pop") / get_val("pop")
+plain_number <- function(x) format(round(x, 0), scientific = FALSE, trim = TRUE)
+cost_label <- function(x) paste0("INR ", round(x / 1000000, 0), "M")
+fractiles <- c("0_5", "5_10", "10_20", "20_30", "30_40", "40_50",
+               "50_60", "60_70", "70_80", "80_90", "90_95", "95_100")
+fractile_shares <- sapply(fractiles, function(f) get_val(paste0("frac_share_", f)))
+get_mpce_fractiles <- function(s) {
+  sapply(fractiles, function(f) get_val(paste0("mpce_", s, "_", f)))
+}
+hh_ratio <- get_val("rural_urban_hh_ratio")
+sector_hh_weights <- c(
+  u = 1 / (1 + hh_ratio),
+  r = hh_ratio / (1 + hh_ratio)
+)
+insured_med_oop <- function(oop_dr, oop_vtdr, vtdr_share,
+                            insurance_coverage,
+                            coverage_med_dr,
+                            coverage_med_vtdr) {
+  oop_dr * (1 - vtdr_share) * (1 - insurance_coverage * coverage_med_dr) +
+    oop_vtdr * vtdr_share * (1 - insurance_coverage * coverage_med_vtdr)
+}
+national_household_consumption_fractiles <- sector_hh_weights["u"] *
+  get_mpce_fractiles("u") * 12 * get_val("hh_size_urban") +
+  sector_hh_weights["r"] *
+  get_mpce_fractiles("r") * 12 * get_val("hh_size_rural")
+quintile_fractiles <- list(
+  c("0_5", "5_10", "10_20"),
+  c("20_30", "30_40"),
+  c("40_50", "50_60"),
+  c("60_70", "70_80"),
+  c("80_90", "90_95", "95_100")
+)
+get_quintile_consumption <- function(i) {
+  selected <- quintile_fractiles[[i]]
+  idx <- match(selected, fractiles)
+  weights <- fractile_shares[idx] / sum(fractile_shares[idx])
+  list(
+    annual_consumption = national_household_consumption_fractiles[idx],
+    weights = weights
+  )
+}
+weighted_threshold_rate <- function(oop, consumption_info, threshold) {
+  sum(consumption_info$weights *
+        as.integer(oop > threshold * consumption_info$annual_consumption))
+}
+weighted_impov_rate <- function(oop, consumption_info, poverty_line) {
+  sum(consumption_info$weights *
+        as.integer(consumption_info$annual_consumption >= poverty_line &
+                     consumption_info$annual_consumption - oop < poverty_line))
+}
 #section 2 OOP cost due to intervention 
 #2.1 Direct medical OOP
 #number of DR patients gets treated at baseline
@@ -32,21 +82,31 @@ treated_inv <- sapply(quintiles, function(i) {
 
 #direct medical OOP at baseline per quintile 
 direct_med_OOP_baseline <- treated_baseline*sapply(quintiles, function(i) {
-  get_val(paste0("oop_med_dr_", i))*
-    (1-get_val(paste0("vtdr_dr_", i)))+
-    get_val(paste0("oop_med_vtdr_", i))*
-    get_val(paste0("vtdr_dr_", i))})
+  insured_med_oop(
+    get_val(paste0("oop_med_dr_", i)),
+    get_val(paste0("oop_med_vtdr_", i)),
+    get_val(paste0("vtdr_dr_", i)),
+    get_val(paste0("ins_cov_", i)),
+    get_val("coverage_med_dr_insured"),
+    get_val("coverage_med_vtdr_insured")
+  )
+})
 
 #direct medical OOP after intervention per quintile
 direct_med_OOP_inv <- treated_inv*sapply(quintiles, function(i) {
-  get_val(paste0("oop_med_dr_", i))*
-    (1-get_val(paste0("vtdr_dr_", i))*(1-get_val("vtdr_reduction")))+
-    get_val(paste0("oop_med_vtdr_", i))*
-    get_val(paste0("vtdr_dr_", i))*
-    (1 - get_val("vtdr_reduction"))})
+  insured_med_oop(
+    get_val(paste0("oop_med_dr_", i)),
+    get_val(paste0("oop_med_vtdr_", i)),
+    get_val(paste0("vtdr_dr_", i)) * (1 - get_val("vtdr_reduction")),
+    get_val(paste0("ins_cov_", i)),
+    get_val("coverage_med_dr_insured"),
+    get_val("coverage_med_vtdr_insured")
+  )
+})
 
 #Additional direct medical OOP due to intervention
 OOP_med_additional <- direct_med_OOP_inv-direct_med_OOP_baseline
+OOP_med_additional_target <- OOP_med_additional * scale_to_target_pop
 
 #2.2 ALL OOP (medical + non-medical)
 #direct non-medical OOP at baseline 
@@ -67,30 +127,45 @@ direct_nonmed_OOP_inv <- treated_inv*sapply(quintiles, function(i) {
 #Additional total OOP due to intervention
 OOP_total_additional <- (direct_med_OOP_inv+direct_nonmed_OOP_inv)-
   (direct_med_OOP_baseline+direct_nonmed_OOP_baseline)
+OOP_total_additional_target <- OOP_total_additional * scale_to_target_pop
 
 #Plots
 library(ggplot2)
 plot_dr <- data.frame(
-  quintile = factor(c("I","II","III","IV","V"), levels=c("I","II","III","IV","V")),
-  dr_detected = dr_detected)
+  quintile = factor(c("I","II","III","IV","V"), levels=c("I","II","III","IV","V")))
 
-#plot of additional direct medical OOP due to intervention
-ggplot(plot_dr, aes(x=quintile, y=OOP_med_additional)) +
-  geom_col(fill="coral1", width=0.6)+
-  labs(title="Additional Direct Medical OOP Due to Intervention",
-       x="Income Quintile (Poorest to Richest)",
-       y="Additional Direct Medical OOP (INR)") +
-  theme_classic()+
-  theme(plot.title=element_text(hjust=0.5, face="bold"))
+#combined plot of additional direct medical OOP and total OOP due to intervention
+plot_oop_q <- data.frame(
+  quintile = rep(plot_dr$quintile, times = 2),
+  outcome = factor(
+    rep(c("Direct Medical OOP\n(INR)", "Total OOP\n(INR)"), each = length(quintiles)),
+    levels = c("Direct Medical OOP\n(INR)", "Total OOP\n(INR)")
+  ),
+  value = c(OOP_med_additional_target, OOP_total_additional_target)
+)
+plot_oop_q$label <- cost_label(plot_oop_q$value)
 
-#plot of additional total OOP due to intervention
-ggplot(plot_dr, aes(x=quintile, y=OOP_total_additional)) +
-  geom_col(fill="coral1", width=0.6)+
-  labs(title="Additional Total OOP Due to Intervention",
-       x="Income Quintile (Poorest to Richest)",
-       y="Additional Medical and Non-medical OOP (INR)") +
-  theme_classic()+
-  theme(plot.title=element_text(hjust=0.5, face="bold"))
+ggplot(plot_oop_q, aes(x = quintile, y = value, fill = outcome)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.65) +
+  geom_text(aes(label = label),
+            position = position_dodge(width = 0.75),
+            vjust = -0.35,
+            size = 3) +
+  scale_fill_manual(values = c("Direct Medical OOP\n(INR)" = "orangered",
+                               "Total OOP\n(INR)" = "orangered4"),
+                    labels = c("Direct Medical OOP", "Total OOP")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.18))) +
+  labs(title = "Additional OOP Due to Intervention by Quintile",
+       x = "Income Quintile (Poorest to Richest)",
+       y = NULL,
+       fill = NULL) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "top",
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
 
 #2.3 Catastrophic Health Expenditure 
 
@@ -98,8 +173,14 @@ ggplot(plot_dr, aes(x=quintile, y=OOP_total_additional)) +
 per_person_oop_baseline <- sapply(quintiles, function(i) {
   vtdr_b <- get_val(paste0("vtdr_dr_", i))
   
-  med    <- get_val(paste0("oop_med_dr_", i))    * (1 - vtdr_b) +
-    get_val(paste0("oop_med_vtdr_", i))  * vtdr_b
+  med    <- insured_med_oop(
+    get_val(paste0("oop_med_dr_", i)),
+    get_val(paste0("oop_med_vtdr_", i)),
+    vtdr_b,
+    get_val(paste0("ins_cov_", i)),
+    get_val("coverage_med_dr_insured"),
+    get_val("coverage_med_vtdr_insured")
+  )
   nonmed <- get_val(paste0("oop_nonmed_dr_", i)) * (1 - vtdr_b) +
     get_val(paste0("oop_nonmed_vtdr_", i)) * vtdr_b
   
@@ -110,50 +191,72 @@ per_person_oop_baseline <- sapply(quintiles, function(i) {
 per_person_oop_inv <- sapply(quintiles, function(i) {
   vtdr_inv <- get_val(paste0("vtdr_dr_", i)) * (1 - get_val("vtdr_reduction"))
   
-  med    <- get_val(paste0("oop_med_dr_", i))    * (1 - vtdr_inv) +
-    get_val(paste0("oop_med_vtdr_", i))  * vtdr_inv
+  med    <- insured_med_oop(
+    get_val(paste0("oop_med_dr_", i)),
+    get_val(paste0("oop_med_vtdr_", i)),
+    vtdr_inv,
+    get_val(paste0("ins_cov_", i)),
+    get_val("coverage_med_dr_insured"),
+    get_val("coverage_med_vtdr_insured")
+  )
   nonmed <- get_val(paste0("oop_nonmed_dr_", i)) * (1 - vtdr_inv) +
     get_val(paste0("oop_nonmed_vtdr_", i)) * vtdr_inv
   
   med + nonmed
 })
 
-#Annunal consumption
-annual_consumption_q <- sapply(quintiles, function(i) {
-  get_val(paste0("mcpe_", i)) * 12
-  })
+# Annual household consumption distributions by quintile. Because the available
+# fractiles are rural/urban, this uses a household-share-weighted approximation
+# to create national fractiles and then groups them into quintiles.
+consumption_q <- lapply(quintiles, get_quintile_consumption)
 
 #CHE thresholds
 th1 <- get_val("th1")   # 0.10
 th2 <- get_val("th2")   # 0.25
 
-#CHE cases per quintile at baseline and after intervention 
-che_10_cases_baseline   <- as.integer(per_person_oop_baseline > th1 * annual_consumption_q)
-che_25_cases_baseline   <- as.integer(per_person_oop_baseline > th2 * annual_consumption_q)
-che_10_cases_inv <- as.integer(per_person_oop_inv > th1 * annual_consumption_q)
-che_25_cases_inv <- as.integer(per_person_oop_inv > th2 * annual_consumption_q)
+# CHE rates per quintile, weighted across MPCE fractiles within each quintile
+che_10_rate_baseline <- sapply(quintiles, function(i) {
+  weighted_threshold_rate(per_person_oop_baseline[i], consumption_q[[i]], th1)
+})
+che_25_rate_baseline <- sapply(quintiles, function(i) {
+  weighted_threshold_rate(per_person_oop_baseline[i], consumption_q[[i]], th2)
+})
+che_10_rate_inv <- sapply(quintiles, function(i) {
+  weighted_threshold_rate(per_person_oop_inv[i], consumption_q[[i]], th1)
+})
+che_25_rate_inv <- sapply(quintiles, function(i) {
+  weighted_threshold_rate(per_person_oop_inv[i], consumption_q[[i]], th2)
+})
 
-# Total CHE cases = number treated × indicator
-che_10_baseline <- treated_baseline * che_10_cases_baseline 
-che_25_baseline <- treated_baseline * che_25_cases_baseline 
-che_10_inv      <- treated_inv * che_10_cases_inv
-che_25_inv      <- treated_inv * che_25_cases_inv
+# Total CHE cases = number treated x weighted fractile CHE rate
+che_10_baseline <- treated_baseline * che_10_rate_baseline
+che_25_baseline <- treated_baseline * che_25_rate_baseline
+che_10_inv      <- treated_inv * che_10_rate_inv
+che_25_inv      <- treated_inv * che_25_rate_inv
 
 # CHE averted
 che_10_additional <- che_10_inv - che_10_baseline
 che_25_additional <- che_25_inv - che_25_baseline
+che_10_additional_target <- che_10_additional * scale_to_target_pop
+che_25_additional_target <- che_25_additional * scale_to_target_pop
 
 #graphs
-ggplot(plot_dr, aes(x=quintile, y=che_10_additional)) +
+ggplot(plot_dr, aes(x=quintile, y=che_10_additional_target)) +
   geom_col(fill="coral1", width=0.6)+
+  geom_text(aes(label = plain_number(che_10_additional_target)), vjust = -0.4, size = 3) +
+  scale_y_continuous(labels = plain_number,
+                     expand = expansion(mult = c(0, 0.1))) +
   labs(title="Additional CHE Cases (10% threshold) Due to Intervention",
        x="Income Quintile (Poorest to Richest)",
        y="Additional CHE Cases") +
   theme_classic()+
   theme(plot.title=element_text(hjust=0.5, face="bold"))
 
-ggplot(plot_dr, aes(x=quintile, y=che_25_additional)) +
+ggplot(plot_dr, aes(x=quintile, y=che_25_additional_target)) +
   geom_col(fill="coral1", width=0.6)+
+  geom_text(aes(label = plain_number(che_25_additional_target)), vjust = -0.4, size = 3) +
+  scale_y_continuous(labels = plain_number,
+                     expand = expansion(mult = c(0, 0.1))) +
   labs(title="Additional CHE Cases (25% threshold) Due to Intervention",
        x="Income Quintile (Poorest to Richest)",
        y="Additional CHE Cases") +
@@ -161,48 +264,144 @@ ggplot(plot_dr, aes(x=quintile, y=che_25_additional)) +
   theme(plot.title=element_text(hjust=0.5, face="bold"))
 
 #section 2.3 impoverishment due to medical expense 
-#annual poverty 
-pov_annual <- 180 * 365
+# Annual household poverty line from a daily household poverty line
+pov_annual <- get_val("pov") * 365
 
-#consumption after OOP
-post_oop_consumption_baseline <- annual_consumption_q - per_person_oop_baseline
-post_oop_consumption_inv      <- annual_consumption_q - per_person_oop_inv
+# Impoverishment rates per quintile, weighted across MPCE fractiles
+impov_rate_baseline <- sapply(quintiles, function(i) {
+  weighted_impov_rate(per_person_oop_baseline[i], consumption_q[[i]], pov_annual)
+})
+impov_rate_inv <- sapply(quintiles, function(i) {
+  weighted_impov_rate(per_person_oop_inv[i], consumption_q[[i]], pov_annual)
+})
 
-#impoverishment cases at baseline and after intervention 
-impov_cases_baseline   <- as.integer(annual_consumption_q >= pov_annual &           # was above
-                                     post_oop_consumption_baseline < pov_annual   # now below  
-                                     )
-impov_cases_inv  <- as.integer(annual_consumption_q >= pov_annual &           # was above
-                               post_oop_consumption_inv < pov_annual)   # now below  
-
-#total impoverishment cases per quintile 
-impov_baseline <- treated_baseline * impov_cases_baseline
-impov_inv      <- treated_inv * impov_cases_inv
+# Total impoverishment cases per quintile = treated patients x weighted fractile rate
+impov_baseline <- treated_baseline * impov_rate_baseline
+impov_inv      <- treated_inv * impov_rate_inv
 
 impov_additional <- impov_inv - impov_baseline
+impov_additional_target <- impov_additional * scale_to_target_pop
 
-ggplot(plot_dr, aes(x=quintile, y=impov_additional)) +
+ggplot(plot_dr, aes(x=quintile, y=impov_additional_target)) +
   geom_col(fill="coral1", width=0.6)+
-  labs(title="Additional Impoverishment Cases Due to Intervention",
+  geom_text(aes(label = plain_number(impov_additional_target)), vjust = -0.4, size = 3) +
+  scale_y_continuous(labels = plain_number,
+                     expand = expansion(mult = c(0, 0.1))) +
+  labs(title="Change in Impoverishment Cases Due to Intervention",
        x="Income Quintile (Poorest to Richest)",
-       y="Additional Impoverishment Cases") +
+       y="Change in Impoverishment Cases") +
   theme_classic()+
   theme(plot.title=element_text(hjust=0.5, face="bold"))
 
 #dashboard
 health_benefit_dash <- as.data.frame(rbind(
-  round(OOP_med_additional, 1),
-  round(OOP_total_additional, 1),
-  round(che_10_additional, 1),
-  round(che_25_additional, 1),
-  round(impov_additional, 1)
+  round(OOP_med_additional_target, 0),
+  round(OOP_total_additional_target, 0),
+  round(che_10_additional_target, 0),
+  round(che_25_additional_target, 0),
+  round(impov_additional_target, 0)
 ))
 colnames(health_benefit_dash) <- c("I","II","III","IV","V")
 rownames(health_benefit_dash) <- c(
-  "Additional Direct Medical OOP due to Intervention",
-  "Additional Total OOP due to Intervention",
-  "Additional CHE Cases (10% threshold)",
-  "Additional CHE Cases (25% threshold)",
-  "Additional Impoverishment Cases"
+  "Additional Direct Medical OOP due to Intervention (scaled to target population)",
+  "Additional Total OOP due to Intervention (scaled to target population)",
+  "Additional CHE Cases (10% threshold, scaled to target population)",
+  "Additional CHE Cases (25% threshold, scaled to target population)",
+  "Change in Impoverishment Cases (scaled to target population)"
 )
 print(health_benefit_dash)
+
+# Sensitivity analysis for medical insurance coverage assumptions.
+run_insurance_sensitivity_quintile <- function(
+    coverage_med_dr_values = c(0.30, 0.50, 0.70),
+    coverage_med_vtdr_values = c(0.40, 0.70, 0.90)) {
+  scenarios <- expand.grid(
+    coverage_med_dr_insured = coverage_med_dr_values,
+    coverage_med_vtdr_insured = coverage_med_vtdr_values
+  )
+  
+  results <- lapply(seq_len(nrow(scenarios)), function(row_id) {
+    cov_dr <- scenarios$coverage_med_dr_insured[row_id]
+    cov_vtdr <- scenarios$coverage_med_vtdr_insured[row_id]
+    
+    med_baseline <- treated_baseline * sapply(quintiles, function(i) {
+      insured_med_oop(
+        get_val(paste0("oop_med_dr_", i)),
+        get_val(paste0("oop_med_vtdr_", i)),
+        get_val(paste0("vtdr_dr_", i)),
+        get_val(paste0("ins_cov_", i)),
+        cov_dr,
+        cov_vtdr
+      )
+    })
+    med_inv <- treated_inv * sapply(quintiles, function(i) {
+      insured_med_oop(
+        get_val(paste0("oop_med_dr_", i)),
+        get_val(paste0("oop_med_vtdr_", i)),
+        get_val(paste0("vtdr_dr_", i)) * (1 - get_val("vtdr_reduction")),
+        get_val(paste0("ins_cov_", i)),
+        cov_dr,
+        cov_vtdr
+      )
+    })
+    
+    oop_baseline <- sapply(quintiles, function(i) {
+      vtdr_b <- get_val(paste0("vtdr_dr_", i))
+      med <- insured_med_oop(
+        get_val(paste0("oop_med_dr_", i)),
+        get_val(paste0("oop_med_vtdr_", i)),
+        vtdr_b,
+        get_val(paste0("ins_cov_", i)),
+        cov_dr,
+        cov_vtdr
+      )
+      nonmed <- get_val(paste0("oop_nonmed_dr_", i)) * (1 - vtdr_b) +
+        get_val(paste0("oop_nonmed_vtdr_", i)) * vtdr_b
+      med + nonmed
+    })
+    oop_inv <- sapply(quintiles, function(i) {
+      vtdr_inv <- get_val(paste0("vtdr_dr_", i)) * (1 - get_val("vtdr_reduction"))
+      med <- insured_med_oop(
+        get_val(paste0("oop_med_dr_", i)),
+        get_val(paste0("oop_med_vtdr_", i)),
+        vtdr_inv,
+        get_val(paste0("ins_cov_", i)),
+        cov_dr,
+        cov_vtdr
+      )
+      nonmed <- get_val(paste0("oop_nonmed_dr_", i)) * (1 - vtdr_inv) +
+        get_val(paste0("oop_nonmed_vtdr_", i)) * vtdr_inv
+      med + nonmed
+    })
+    
+    che_10_b <- sapply(quintiles, function(i) weighted_threshold_rate(oop_baseline[i], consumption_q[[i]], th1))
+    che_25_b <- sapply(quintiles, function(i) weighted_threshold_rate(oop_baseline[i], consumption_q[[i]], th2))
+    che_10_i <- sapply(quintiles, function(i) weighted_threshold_rate(oop_inv[i], consumption_q[[i]], th1))
+    che_25_i <- sapply(quintiles, function(i) weighted_threshold_rate(oop_inv[i], consumption_q[[i]], th2))
+    impov_b <- sapply(quintiles, function(i) weighted_impov_rate(oop_baseline[i], consumption_q[[i]], pov_annual))
+    impov_i <- sapply(quintiles, function(i) weighted_impov_rate(oop_inv[i], consumption_q[[i]], pov_annual))
+    
+    data.frame(
+      coverage_med_dr_insured = cov_dr,
+      coverage_med_vtdr_insured = cov_vtdr,
+      additional_direct_med_oop = round(sum((med_inv - med_baseline) * scale_to_target_pop), 0),
+      additional_total_oop = round(sum(((med_inv + direct_nonmed_OOP_inv) -
+                                          (med_baseline + direct_nonmed_OOP_baseline)) *
+                                         scale_to_target_pop), 0),
+      additional_che_10_cases = round(sum((treated_inv * che_10_i -
+                                             treated_baseline * che_10_b) *
+                                            scale_to_target_pop), 0),
+      additional_che_25_cases = round(sum((treated_inv * che_25_i -
+                                             treated_baseline * che_25_b) *
+                                            scale_to_target_pop), 0),
+      change_impoverishment_cases = round(sum((treated_inv * impov_i -
+                                                treated_baseline * impov_b) *
+                                               scale_to_target_pop), 0)
+    )
+  })
+  
+  do.call(rbind, results)
+}
+
+insurance_sensitivity_quintile <- run_insurance_sensitivity_quintile()
+print(insurance_sensitivity_quintile)

@@ -1,12 +1,15 @@
 #health benefit calculation and disaggregation by urban/rural sector 
 #cases of DR detected and cases of blindness averted due to intervention
-
 input <- read.csv("input table new.csv")
+input$Parameters <- trimws(input$Parameters)
 input$Value <- as.numeric(gsub(",", "", input$Value)) 
 get_val <- function(name) input$Value[input$Parameters == name]
+scale_to_target_pop <- get_val("target_pop") / get_val("pop")
+plain_number <- function(x) format(round(x, 0), scientific = FALSE, trim = TRUE)
 
 sectors <- c("u", "r")   # u = urban, r = rural
 sector_labels <- c("Urban", "Rural")
+get_pcu_sector <- function(s) get_val(paste0("pcu_", s)) / 100
 
 #section 1: Additional DR cases detected due to intervention  
 
@@ -14,7 +17,7 @@ sector_labels <- c("Urban", "Rural")
 dr_baseline_ur <- sapply(sectors, function(s) {
   get_val(paste0("pop_", s)) *
     get_val(paste0("dr_", s)) *
-    get_val(paste0("pcu_", s)) *
+    get_pcu_sector(s) *
     get_val("cov_b") *
     get_val("sens_b")
 })
@@ -23,22 +26,26 @@ dr_baseline_ur <- sapply(sectors, function(s) {
 dr_inv_ur <- sapply(sectors, function(s) {
   get_val(paste0("pop_", s)) *
     get_val(paste0("dr_", s)) *
-    get_val(paste0("pcu_", s)) *
+    get_pcu_sector(s) *
     get_val("cov_inv") *
     get_val("sens_inv")
 })
 
 # 1.3 Additional DR cases detected
 dr_detected_ur <- dr_inv_ur - dr_baseline_ur
+dr_detected_ur_target <- dr_detected_ur * scale_to_target_pop
 
 library(ggplot2)
 plot_dr_ur <- data.frame(
   sector = factor(sector_labels, levels = sector_labels),
-  dr_detected = dr_detected_ur
+  dr_detected = dr_detected_ur_target
 )
 
 ggplot(plot_dr_ur, aes(x = sector, y = dr_detected)) +
   geom_col(fill = "darkturquoise", width = 0.6) +
+  geom_text(aes(label = plain_number(dr_detected)), vjust = -0.4, size = 3) +
+  scale_y_continuous(labels = plain_number,
+                     expand = expansion(mult = c(0, 0.1))) +
   labs(title = "Additional DR Cases Detected Due to Intervention",
        x = "Place of Residence",
        y = "Additional DR Cases Detected") +
@@ -52,7 +59,7 @@ ggplot(plot_dr_ur, aes(x = sector, y = dr_detected)) +
 blind_baseline_ur <- sapply(sectors, function(s) {
   get_val(paste0("pop_", s)) *
     get_val(paste0("dr_", s)) *
-    get_val(paste0("pcu_", s)) *
+    get_pcu_sector(s) *
     get_val("cov_b") *
     get_val("sens_b") *
     (1 - get_val("lfu_referral")) *
@@ -65,7 +72,7 @@ blind_baseline_ur <- sapply(sectors, function(s) {
 blind_inv_ur <- sapply(sectors, function(s) {
   get_val(paste0("pop_", s)) *
     get_val(paste0("dr_", s)) *
-    get_val(paste0("pcu_", s)) *
+    get_pcu_sector(s) *
     get_val("cov_inv") *
     get_val("sens_inv") *
     (1 - get_val("lfu_referral")) *
@@ -77,14 +84,18 @@ blind_inv_ur <- sapply(sectors, function(s) {
 
 # 2.3 Blindness cases averted
 blind_averted_ur <- blind_inv_ur - blind_baseline_ur
+blind_averted_ur_target <- blind_averted_ur * scale_to_target_pop
 
 plot_blind_ur <- data.frame(
   sector = factor(sector_labels, levels = sector_labels),
-  blind_averted = blind_averted_ur
+  blind_averted = blind_averted_ur_target
 )
 
 ggplot(plot_blind_ur, aes(x = sector, y = blind_averted)) +
   geom_col(fill = "darkturquoise", width = 0.6) +
+  geom_text(aes(label = plain_number(blind_averted)), vjust = -0.4, size = 3) +
+  scale_y_continuous(labels = plain_number,
+                     expand = expansion(mult = c(0, 0.1))) +
   labs(title = "Blindness Cases Averted Due to Intervention",
        x = "Place of Residence",
        y = "Blindness Cases Averted") +
@@ -94,11 +105,11 @@ ggplot(plot_blind_ur, aes(x = sector, y = blind_averted)) +
 #dashboard
 
 health_benefit_dash_ur <- as.data.frame(rbind(
-  round(dr_detected_ur, 1),
-  round(blind_averted_ur, 3)))
+  round(dr_detected_ur_target, 0),
+  round(blind_averted_ur_target, 0)))
   colnames(health_benefit_dash_ur) <- c("Urban", "Rural")
   rownames(health_benefit_dash_ur) <- c(
-    "Additional DR Cases Detected",
-    "Blindness Cases Averted")
+    "Additional DR Cases Detected (scaled to target population)",
+    "Blindness Cases Averted (scaled to target population)")
 
 print(health_benefit_dash_ur)
