@@ -1,8 +1,10 @@
 rm(list = ls())
+
 input <- read.csv("input table new.csv")
 input$Parameters <- trimws(input$Parameters)
-input$Value <- as.numeric(gsub(",", "", input$Value)) 
+input$Value <- as.numeric(gsub(",", "", input$Value))
 hces <- read.csv("hces_simulated_100k_households.csv", stringsAsFactors = FALSE)
+
 get_val <- function(name) input$Value[input$Parameters == name]
 scale_to_target_pop <- get_val("target_pop") / get_val("pop")
 plain_number <- function(x) format(round(x, 0), scientific = FALSE, trim = TRUE)
@@ -17,24 +19,62 @@ sectors <- c("u", "r")   # u = urban, r = rural
 sector_labels <- c("Urban", "Rural")
 get_pcu_sector <- function(s) get_val(paste0("pcu_", s)) / 100
 get_insurance_coverage_sector <- function(s) get_val(paste0("ins_cov_", s))
+
 required_hces_cols <- c("sector", "hh_size", "hh_usual_cons_exp_mnth", "household_quintile")
 missing_hces_cols <- setdiff(required_hces_cols, names(hces))
 if (length(missing_hces_cols) > 0) {
   stop("Missing required columns in hces_simulated_100k_households.csv: ",
        paste(missing_hces_cols, collapse = ", "))
 }
+
 hces$sector_raw <- trimws(as.character(hces$sector))
 hces$sector_code <- ifelse(tolower(hces$sector_raw) %in% c("1", "r", "rural"),
                            "r",
                            ifelse(tolower(hces$sector_raw) %in% c("2", "u", "urban"),
                                   "u",
                                   NA))
-hces$hh_consumption_annual <- as.numeric(hces$hh_usual_cons_exp_mnth) * 12
+hces$sector_label <- factor(ifelse(hces$sector_code == "u", "Urban", "Rural"),
+                            levels = c("Urban", "Rural"))
+hces$hh_size <- as.numeric(hces$hh_size)
+hces$hh_usual_cons_exp_mnth <- as.numeric(hces$hh_usual_cons_exp_mnth)
+hces$hh_consumption_annual <- hces$hh_usual_cons_exp_mnth * 12
 hces$household_quintile <- as.integer(hces$household_quintile)
 hces <- hces[!is.na(hces$sector_code) &
+               !is.na(hces$hh_size) &
+               hces$hh_size > 0 &
                !is.na(hces$hh_consumption_annual) &
                hces$hh_consumption_annual > 0 &
                hces$household_quintile %in% 1:5, ]
+
+if (nrow(hces) == 0) {
+  stop("No valid simulated HCES households remain after cleaning.")
+}
+
+summarize_hces <- function(data, group_var, group_name) {
+  grouped <- split(data, data[[group_var]])
+  summary <- do.call(rbind, lapply(names(grouped), function(group) {
+    households <- grouped[[group]]
+    data.frame(
+      group = group,
+      households = nrow(households),
+      household_share = round(nrow(households) / nrow(data), 4),
+      mean_hh_size = round(mean(households$hh_size), 2),
+      mean_monthly_consumption = round(mean(households$hh_usual_cons_exp_mnth), 0),
+      median_monthly_consumption = round(median(households$hh_usual_cons_exp_mnth), 0),
+      mean_annual_consumption = round(mean(households$hh_consumption_annual), 0),
+      median_annual_consumption = round(median(households$hh_consumption_annual), 0)
+    )
+  }))
+  rownames(summary) <- NULL
+  names(summary)[1] <- group_name
+  summary
+}
+
+hces_summary_quintile <- summarize_hces(hces, "household_quintile", "household_quintile")
+hces_summary_urbanicity <- summarize_hces(hces, "sector_label", "urbanicity")
+print(hces_summary_quintile)
+print(hces_summary_urbanicity)
+
 get_hces_sector <- function(s) {
   households <- hces[hces$sector_code == s, ]
   if (nrow(households) == 0) {
@@ -42,13 +82,16 @@ get_hces_sector <- function(s) {
   }
   households
 }
+
 household_threshold_rate <- function(oop, households, threshold) {
   mean(oop > threshold * households$hh_consumption_annual)
 }
+
 household_impov_rate <- function(oop, households, poverty_line) {
   mean(households$hh_consumption_annual >= poverty_line &
          households$hh_consumption_annual - oop < poverty_line)
 }
+
 insured_med_oop <- function(oop_dr, oop_vtdr, vtdr_share,
                             insurance_coverage,
                             coverage_med_dr,
@@ -57,13 +100,7 @@ insured_med_oop <- function(oop_dr, oop_vtdr, vtdr_share,
     oop_vtdr * vtdr_share * (1 - insurance_coverage * coverage_med_vtdr)
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# COST CALCULATION — URBAN/RURAL DISAGGREGATION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# ─── 2.1 Direct medical OOP ────────────────────────────────────────────────────
-
-# Number of DR patients treated at baseline
+# Number of DR patients treated at baseline and after intervention.
 treated_baseline_ur <- sapply(sectors, function(s) {
   get_val(paste0("pop_", s)) *
     get_val(paste0("dr_", s)) *
@@ -74,7 +111,6 @@ treated_baseline_ur <- sapply(sectors, function(s) {
     (1 - get_val("lfu_treat"))
 })
 
-# Number of DR patients treated after intervention
 treated_inv_ur <- sapply(sectors, function(s) {
   get_val(paste0("pop_", s)) *
     get_val(paste0("dr_", s)) *
@@ -85,378 +121,189 @@ treated_inv_ur <- sapply(sectors, function(s) {
     (1 - get_val("lfu_treat"))
 })
 
-# Direct medical OOP at baseline by sector
-direct_med_OOP_baseline_ur <- treated_baseline_ur * sapply(sectors, function(s) {
-  insured_med_oop(
-    get_val(paste0("oop_med_dr_", s)),
-    get_val(paste0("oop_med_vtdr_", s)),
-    get_val(paste0("vtdr_dr_", s)),
-    get_insurance_coverage_sector(s),
-    get_val("coverage_med_dr_insured"),
-    get_val("coverage_med_vtdr_insured")
-  )
-})
-
-# Direct medical OOP after intervention by sector
-direct_med_OOP_inv_ur <- treated_inv_ur * sapply(sectors, function(s) {
-  vtdr_inv <- get_val(paste0("vtdr_dr_", s)) * (1 - get_val("vtdr_reduction"))
-  insured_med_oop(
-    get_val(paste0("oop_med_dr_", s)),
-    get_val(paste0("oop_med_vtdr_", s)),
-    vtdr_inv,
-    get_insurance_coverage_sector(s),
-    get_val("coverage_med_dr_insured"),
-    get_val("coverage_med_vtdr_insured")
-  )
-})
-
-OOP_med_additional_ur <- direct_med_OOP_inv_ur - direct_med_OOP_baseline_ur
-OOP_med_additional_ur_target <- OOP_med_additional_ur * scale_to_target_pop
-
-# ─── 2.2 All OOP (medical + non-medical) ───────────────────────────────────────
-
-# Direct non-medical OOP at baseline
 direct_nonmed_OOP_baseline_ur <- treated_baseline_ur * sapply(sectors, function(s) {
-  get_val(paste0("oop_nonmed_dr_", s))   * (1 - get_val(paste0("vtdr_dr_", s))) +
+  get_val(paste0("oop_nonmed_dr_", s)) * (1 - get_val(paste0("vtdr_dr_", s))) +
     get_val(paste0("oop_nonmed_vtdr_", s)) * get_val(paste0("vtdr_dr_", s))
 })
 
-# Direct non-medical OOP after intervention
 direct_nonmed_OOP_inv_ur <- treated_inv_ur * sapply(sectors, function(s) {
   vtdr_inv <- get_val(paste0("vtdr_dr_", s)) * (1 - get_val("vtdr_reduction"))
-  get_val(paste0("oop_nonmed_dr_", s))   * (1 - vtdr_inv) +
+  get_val(paste0("oop_nonmed_dr_", s)) * (1 - vtdr_inv) +
     get_val(paste0("oop_nonmed_vtdr_", s)) * vtdr_inv
 })
 
-OOP_total_additional_ur <- (direct_med_OOP_inv_ur + direct_nonmed_OOP_inv_ur) -
-  (direct_med_OOP_baseline_ur + direct_nonmed_OOP_baseline_ur)
-OOP_total_additional_ur_target <- OOP_total_additional_ur * scale_to_target_pop
-
-# ─── Cost plots ────────────────────────────────────────────────────────────────
-
-library(ggplot2)
-plot_cost_ur <- data.frame(
-  sector = factor(sector_labels, levels = sector_labels),
-  OOP_med_additional = OOP_med_additional_ur_target,
-  OOP_total_additional = OOP_total_additional_ur_target
-)
-
-ggplot(plot_cost_ur, aes(x = sector, y = OOP_med_additional)) +
-  geom_col(fill = "red", width = 0.6) +
-  geom_text(aes(label = plain_number(OOP_med_additional)), vjust = -0.4, size = 3) +
-  scale_y_continuous(labels = plain_number,
-                     expand = expansion(mult = c(0, 0.1))) +
-  labs(title = "Additional Direct Medical OOP Due to Intervention",
-       x = "Place of Residence",
-       y = "Additional Direct Medical OOP (INR)") +
-  theme_classic() +
-  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
-
-ggplot(plot_cost_ur, aes(x = sector, y = OOP_total_additional)) +
-  geom_col(fill = "red", width = 0.6) +
-  geom_text(aes(label = plain_number(OOP_total_additional)), vjust = -0.4, size = 3) +
-  scale_y_continuous(labels = plain_number,
-                     expand = expansion(mult = c(0, 0.1))) +
-  labs(title = "Additional Total OOP Due to Intervention",
-       x = "Place of Residence",
-       y = "Additional Medical and Non-medical OOP (INR)") +
-  theme_classic() +
-  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
-
-# ─── 2.3 Catastrophic Health Expenditure ───────────────────────────────────────
-
-# Per-person total OOP — baseline
-per_person_oop_baseline_ur <- sapply(sectors, function(s) {
-  vtdr_b <- get_val(paste0("vtdr_dr_", s))
-  med    <- insured_med_oop(
-    get_val(paste0("oop_med_dr_", s)),
-    get_val(paste0("oop_med_vtdr_", s)),
-    vtdr_b,
-    get_insurance_coverage_sector(s),
-    get_val("coverage_med_dr_insured"),
-    get_val("coverage_med_vtdr_insured")
-  )
-  nonmed <- get_val(paste0("oop_nonmed_dr_", s)) * (1 - vtdr_b) +
-    get_val(paste0("oop_nonmed_vtdr_", s)) * vtdr_b
-  med + nonmed
-})
-
-# Per-person total OOP — intervention
-per_person_oop_inv_ur <- sapply(sectors, function(s) {
-  vtdr_inv <- get_val(paste0("vtdr_dr_", s)) * (1 - get_val("vtdr_reduction"))
-  med    <- insured_med_oop(
-    get_val(paste0("oop_med_dr_", s)),
-    get_val(paste0("oop_med_vtdr_", s)),
-    vtdr_inv,
-    get_insurance_coverage_sector(s),
-    get_val("coverage_med_dr_insured"),
-    get_val("coverage_med_vtdr_insured")
-  )
-  nonmed <- get_val(paste0("oop_nonmed_dr_", s)) * (1 - vtdr_inv) +
-    get_val(paste0("oop_nonmed_vtdr_", s)) * vtdr_inv
-  med + nonmed
-})
-
-# Simulated household consumption distributions by sector
 households_ur <- lapply(sectors, get_hces_sector)
 names(households_ur) <- sectors
 
-# CHE thresholds
-th1 <- get_val("th1")   # 0.10
-th2 <- get_val("th2")   # 0.25
-
-# CHE rates per sector, calculated across simulated households
-che_10_rate_baseline_ur <- sapply(sectors, function(s) {
-  household_threshold_rate(per_person_oop_baseline_ur[s], households_ur[[s]], th1)
-})
-che_25_rate_baseline_ur <- sapply(sectors, function(s) {
-  household_threshold_rate(per_person_oop_baseline_ur[s], households_ur[[s]], th2)
-})
-che_10_rate_inv_ur <- sapply(sectors, function(s) {
-  household_threshold_rate(per_person_oop_inv_ur[s], households_ur[[s]], th1)
-})
-che_25_rate_inv_ur <- sapply(sectors, function(s) {
-  household_threshold_rate(per_person_oop_inv_ur[s], households_ur[[s]], th2)
-})
-
-# Total CHE cases = treated patients x simulated-household CHE rate
-che_10_baseline_ur <- treated_baseline_ur * che_10_rate_baseline_ur
-che_25_baseline_ur <- treated_baseline_ur * che_25_rate_baseline_ur
-che_10_inv_ur      <- treated_inv_ur * che_10_rate_inv_ur
-che_25_inv_ur      <- treated_inv_ur * che_25_rate_inv_ur
-
-# CHE additional (intervention - baseline)
-che_10_additional_ur <- che_10_inv_ur - che_10_baseline_ur
-che_25_additional_ur <- che_25_inv_ur - che_25_baseline_ur
-che_10_additional_ur_target <- che_10_additional_ur * scale_to_target_pop
-che_25_additional_ur_target <- che_25_additional_ur * scale_to_target_pop
-
-# CHE plots
-plot_che_ur <- data.frame(
-  sector = factor(sector_labels, levels = sector_labels),
-  che_10_additional = che_10_additional_ur_target,
-  che_25_additional = che_25_additional_ur_target
-)
-
-ggplot(plot_che_ur, aes(x = sector, y = che_10_additional)) +
-  geom_col(fill = "red", width = 0.6) +
-  geom_text(aes(label = plain_number(che_10_additional)), vjust = -0.4, size = 3) +
-  scale_y_continuous(labels = plain_number,
-                     expand = expansion(mult = c(0, 0.1))) +
-  labs(title = "Additional CHE Cases (10% threshold) Due to Intervention",
-       x = "Place of Residence",
-       y = "Additional CHE Cases") +
-  theme_classic() +
-  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
-
-ggplot(plot_che_ur, aes(x = sector, y = che_25_additional)) +
-  geom_col(fill = "red", width = 0.6) +
-  geom_text(aes(label = plain_number(che_25_additional)), vjust = -0.4, size = 3) +
-  scale_y_continuous(labels = plain_number,
-                     expand = expansion(mult = c(0, 0.1))) +
-  labs(title = "Additional CHE Cases (25% threshold) Due to Intervention",
-       x = "Place of Residence",
-       y = "Additional CHE Cases") +
-  theme_classic() +
-  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
-
-# ─── 2.4 Impoverishment due to medical expense ─────────────────────────────────
-
-# Annual household poverty line from a daily household poverty line
+th1 <- get_val("th1")
 pov_annual <- get_val("pov") * 365
 
-# Impoverishment rates per sector, calculated across simulated households
-impov_rate_baseline_ur <- sapply(sectors, function(s) {
-  household_impov_rate(per_person_oop_baseline_ur[s], households_ur[[s]], pov_annual)
-})
-impov_rate_inv_ur <- sapply(sectors, function(s) {
-  household_impov_rate(per_person_oop_inv_ur[s], households_ur[[s]], pov_annual)
-})
-
-# Total impoverishment cases per sector = treated patients x simulated-household rate
-impov_baseline_ur <- treated_baseline_ur * impov_rate_baseline_ur
-impov_inv_ur      <- treated_inv_ur * impov_rate_inv_ur
-
-impov_additional_ur <- impov_inv_ur - impov_baseline_ur
-impov_additional_ur_target <- impov_additional_ur * scale_to_target_pop
-
-# Impoverishment plot
-plot_impov_ur <- data.frame(
-  sector = factor(sector_labels, levels = sector_labels),
-  impov_additional = impov_additional_ur_target
-)
-
-ggplot(plot_impov_ur, aes(x = sector, y = impov_additional)) +
-  geom_col(fill = "red", width = 0.6) +
-  geom_text(aes(label = plain_number(impov_additional)), vjust = -0.4, size = 3) +
-  scale_y_continuous(labels = plain_number,
-                     expand = expansion(mult = c(0, 0.1))) +
-  labs(title = "Change in Impoverishment Cases Due to Intervention",
-       x = "Place of Residence",
-       y = "Change in Impoverishment Cases") +
-  theme_classic() +
-  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
-
-# Combined Urban/Rural burden plot. Each metric gets its own y-scale so the
-# urban/rural comparison stays visible despite mixing INR totals and case counts.
-plot_burden_ur <- data.frame(
-  category = factor(
-    rep(c("Direct Medical OOP\n(INR)",
-          "Total OOP\n(INR)",
-          "CHE cases\n(Number)",
-          "Impoverishment\n(Number)"),
-        each = 2),
-    levels = c("Direct Medical OOP\n(INR)",
-               "Total OOP\n(INR)",
-               "CHE cases\n(Number)",
-               "Impoverishment\n(Number)")
-  ),
-  sector = factor(rep(sector_labels, times = 4), levels = sector_labels),
-  value = c(
-    OOP_med_additional_ur_target,
-    OOP_total_additional_ur_target,
-    che_10_additional_ur_target,
-    impov_additional_ur_target
-  ),
-  unit = rep(c("INR", "INR", "Number", "Number"), each = 2)
-)
-plot_burden_ur$plot_value <- pmax(plot_burden_ur$value, 1)
-plot_burden_ur$label <- burden_label(plot_burden_ur$value, plot_burden_ur$unit)
-
-ggplot(plot_burden_ur, aes(x = sector, y = plot_value, fill = sector)) +
-  geom_col(width = 0.62) +
-  geom_text(aes(label = label),
-            vjust = -0.35,
-            size = 3) +
-  scale_fill_manual(values = c("Urban" = "#0067B9", "Rural" = "lightcoral")) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.18))) +
-  facet_wrap(~ category, scales = "free_y", nrow = 1) +
-  labs(title = "Rural vs Urban Burden",
-       x = NULL,
-       y = NULL,
-       fill = NULL) +
-  theme_classic() +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    legend.position = "top",
-    axis.text.x = element_blank(),
-    axis.text.y = element_blank(),
-    axis.ticks = element_blank(),
-    strip.background = element_blank(),
-    strip.text = element_text(size = 10)
-  )
-
-#dashboard
-
-health_benefit_dash_ur <- as.data.frame(rbind(
-  round(OOP_med_additional_ur_target, 0),
-  round(OOP_total_additional_ur_target, 0),
-  round(che_10_additional_ur_target, 0),
-  round(che_25_additional_ur_target, 0),
-  round(impov_additional_ur_target, 0)
-))
-colnames(health_benefit_dash_ur) <- c("Urban", "Rural")
-rownames(health_benefit_dash_ur) <- c(
-  "Additional Direct Medical OOP due to Intervention (scaled to target population)",
-  "Additional Total OOP due to Intervention (scaled to target population)",
-  "Additional CHE Cases (10% threshold, scaled to target population)",
-  "Additional CHE Cases (25% threshold, scaled to target population)",
-  "Change in Impoverishment Cases (scaled to target population)"
-)
-print(health_benefit_dash_ur)
-
-# Sensitivity analysis for medical insurance coverage assumptions. No graphs are
-# generated; results summarize total changes across urban and rural groups.
-run_insurance_sensitivity_sector <- function(
-    coverage_med_dr_values = c(0.30, 0.50, 0.70),
-    coverage_med_vtdr_values = c(0.40, 0.70, 0.90)) {
-  scenarios <- expand.grid(
-    coverage_med_dr_insured = coverage_med_dr_values,
-    coverage_med_vtdr_insured = coverage_med_vtdr_values
-  )
-  
-  results <- lapply(seq_len(nrow(scenarios)), function(row_id) {
-    cov_dr <- scenarios$coverage_med_dr_insured[row_id]
-    cov_vtdr <- scenarios$coverage_med_vtdr_insured[row_id]
-    
-    med_baseline <- treated_baseline_ur * sapply(sectors, function(s) {
-      insured_med_oop(
-        get_val(paste0("oop_med_dr_", s)),
-        get_val(paste0("oop_med_vtdr_", s)),
-        get_val(paste0("vtdr_dr_", s)),
-        get_insurance_coverage_sector(s),
-        cov_dr,
-        cov_vtdr
-      )
-    })
-    med_inv <- treated_inv_ur * sapply(sectors, function(s) {
-      insured_med_oop(
-        get_val(paste0("oop_med_dr_", s)),
-        get_val(paste0("oop_med_vtdr_", s)),
-        get_val(paste0("vtdr_dr_", s)) * (1 - get_val("vtdr_reduction")),
-        get_insurance_coverage_sector(s),
-        cov_dr,
-        cov_vtdr
-      )
-    })
-    
-    oop_baseline <- sapply(sectors, function(s) {
-      vtdr_b <- get_val(paste0("vtdr_dr_", s))
-      med <- insured_med_oop(
-        get_val(paste0("oop_med_dr_", s)),
-        get_val(paste0("oop_med_vtdr_", s)),
-        vtdr_b,
-        get_insurance_coverage_sector(s),
-        cov_dr,
-        cov_vtdr
-      )
-      nonmed <- get_val(paste0("oop_nonmed_dr_", s)) * (1 - vtdr_b) +
-        get_val(paste0("oop_nonmed_vtdr_", s)) * vtdr_b
-      med + nonmed
-    })
-    oop_inv <- sapply(sectors, function(s) {
-      vtdr_inv <- get_val(paste0("vtdr_dr_", s)) * (1 - get_val("vtdr_reduction"))
-      med <- insured_med_oop(
-        get_val(paste0("oop_med_dr_", s)),
-        get_val(paste0("oop_med_vtdr_", s)),
-        vtdr_inv,
-        get_insurance_coverage_sector(s),
-        cov_dr,
-        cov_vtdr
-      )
-      nonmed <- get_val(paste0("oop_nonmed_dr_", s)) * (1 - vtdr_inv) +
-        get_val(paste0("oop_nonmed_vtdr_", s)) * vtdr_inv
-      med + nonmed
-    })
-    
-    che_10_b <- sapply(sectors, function(s) household_threshold_rate(oop_baseline[s], households_ur[[s]], th1))
-    che_25_b <- sapply(sectors, function(s) household_threshold_rate(oop_baseline[s], households_ur[[s]], th2))
-    che_10_i <- sapply(sectors, function(s) household_threshold_rate(oop_inv[s], households_ur[[s]], th1))
-    che_25_i <- sapply(sectors, function(s) household_threshold_rate(oop_inv[s], households_ur[[s]], th2))
-    impov_b <- sapply(sectors, function(s) household_impov_rate(oop_baseline[s], households_ur[[s]], pov_annual))
-    impov_i <- sapply(sectors, function(s) household_impov_rate(oop_inv[s], households_ur[[s]], pov_annual))
-    
-    data.frame(
-      coverage_med_dr_insured = cov_dr,
-      coverage_med_vtdr_insured = cov_vtdr,
-      additional_direct_med_oop = round(sum((med_inv - med_baseline) * scale_to_target_pop), 0),
-      additional_total_oop = round(sum(((med_inv + direct_nonmed_OOP_inv_ur) -
-                                          (med_baseline + direct_nonmed_OOP_baseline_ur)) *
-                                         scale_to_target_pop), 0),
-      additional_che_10_cases = round(sum((treated_inv_ur * che_10_i -
-                                             treated_baseline_ur * che_10_b) *
-                                            scale_to_target_pop), 0),
-      additional_che_25_cases = round(sum((treated_inv_ur * che_25_i -
-                                             treated_baseline_ur * che_25_b) *
-                                            scale_to_target_pop), 0),
-      change_impoverishment_cases = round(sum((treated_inv_ur * impov_i -
-                                                treated_baseline_ur * impov_b) *
-                                               scale_to_target_pop), 0)
+calculate_sector_results <- function(coverage_med_dr_insured,
+                                     coverage_med_vtdr_insured,
+                                     scenario_label) {
+  direct_med_OOP_baseline_ur <- treated_baseline_ur * sapply(sectors, function(s) {
+    insured_med_oop(
+      get_val(paste0("oop_med_dr_", s)),
+      get_val(paste0("oop_med_vtdr_", s)),
+      get_val(paste0("vtdr_dr_", s)),
+      get_insurance_coverage_sector(s),
+      coverage_med_dr_insured,
+      coverage_med_vtdr_insured
     )
   })
   
-  do.call(rbind, results)
+  direct_med_OOP_inv_ur <- treated_inv_ur * sapply(sectors, function(s) {
+    vtdr_inv <- get_val(paste0("vtdr_dr_", s)) * (1 - get_val("vtdr_reduction"))
+    insured_med_oop(
+      get_val(paste0("oop_med_dr_", s)),
+      get_val(paste0("oop_med_vtdr_", s)),
+      vtdr_inv,
+      get_insurance_coverage_sector(s),
+      coverage_med_dr_insured,
+      coverage_med_vtdr_insured
+    )
+  })
+  
+  per_person_oop_baseline_ur <- sapply(sectors, function(s) {
+    vtdr_b <- get_val(paste0("vtdr_dr_", s))
+    med <- insured_med_oop(
+      get_val(paste0("oop_med_dr_", s)),
+      get_val(paste0("oop_med_vtdr_", s)),
+      vtdr_b,
+      get_insurance_coverage_sector(s),
+      coverage_med_dr_insured,
+      coverage_med_vtdr_insured
+    )
+    nonmed <- get_val(paste0("oop_nonmed_dr_", s)) * (1 - vtdr_b) +
+      get_val(paste0("oop_nonmed_vtdr_", s)) * vtdr_b
+    med + nonmed
+  })
+  
+  per_person_oop_inv_ur <- sapply(sectors, function(s) {
+    vtdr_inv <- get_val(paste0("vtdr_dr_", s)) * (1 - get_val("vtdr_reduction"))
+    med <- insured_med_oop(
+      get_val(paste0("oop_med_dr_", s)),
+      get_val(paste0("oop_med_vtdr_", s)),
+      vtdr_inv,
+      get_insurance_coverage_sector(s),
+      coverage_med_dr_insured,
+      coverage_med_vtdr_insured
+    )
+    nonmed <- get_val(paste0("oop_nonmed_dr_", s)) * (1 - vtdr_inv) +
+      get_val(paste0("oop_nonmed_vtdr_", s)) * vtdr_inv
+    med + nonmed
+  })
+  
+  OOP_med_additional_ur <- direct_med_OOP_inv_ur - direct_med_OOP_baseline_ur
+  OOP_total_additional_ur <- (direct_med_OOP_inv_ur + direct_nonmed_OOP_inv_ur) -
+    (direct_med_OOP_baseline_ur + direct_nonmed_OOP_baseline_ur)
+  
+  che_10_rate_baseline_ur <- sapply(sectors, function(s) {
+    household_threshold_rate(per_person_oop_baseline_ur[s], households_ur[[s]], th1)
+  })
+  che_10_rate_inv_ur <- sapply(sectors, function(s) {
+    household_threshold_rate(per_person_oop_inv_ur[s], households_ur[[s]], th1)
+  })
+  che_10_additional_ur <- treated_inv_ur * che_10_rate_inv_ur -
+    treated_baseline_ur * che_10_rate_baseline_ur
+  
+  impov_rate_baseline_ur <- sapply(sectors, function(s) {
+    household_impov_rate(per_person_oop_baseline_ur[s], households_ur[[s]], pov_annual)
+  })
+  impov_rate_inv_ur <- sapply(sectors, function(s) {
+    household_impov_rate(per_person_oop_inv_ur[s], households_ur[[s]], pov_annual)
+  })
+  impov_additional_ur <- treated_inv_ur * impov_rate_inv_ur -
+    treated_baseline_ur * impov_rate_baseline_ur
+  
+  list(
+    scenario_label = scenario_label,
+    OOP_med_additional = OOP_med_additional_ur * scale_to_target_pop,
+    OOP_total_additional = OOP_total_additional_ur * scale_to_target_pop,
+    che_10_additional = che_10_additional_ur * scale_to_target_pop,
+    impov_additional = impov_additional_ur * scale_to_target_pop
+  )
 }
 
-insurance_sensitivity_sector <- run_insurance_sensitivity_sector()
-print(insurance_sensitivity_sector)
+make_burden_plot <- function(results) {
+  plot_burden_ur <- data.frame(
+    category = factor(
+      rep(c("Direct Medical OOP\n(INR)",
+            "Total OOP\n(INR)",
+            "CHE cases\n(Number)",
+            "Impoverishment\n(Number)"),
+          each = 2),
+      levels = c("Direct Medical OOP\n(INR)",
+                 "Total OOP\n(INR)",
+                 "CHE cases\n(Number)",
+                 "Impoverishment\n(Number)")
+    ),
+    sector = factor(rep(sector_labels, times = 4), levels = sector_labels),
+    value = c(
+      results$OOP_med_additional,
+      results$OOP_total_additional,
+      results$che_10_additional,
+      results$impov_additional
+    ),
+    unit = rep(c("INR", "INR", "Number", "Number"), each = 2)
+  )
+  plot_burden_ur$label <- burden_label(plot_burden_ur$value, plot_burden_ur$unit)
+  plot_burden_ur$label_vjust <- ifelse(plot_burden_ur$value >= 0, -0.35, 1.25)
+  
+  ggplot(plot_burden_ur, aes(x = sector, y = value, fill = sector)) +
+    geom_col(width = 0.62) +
+    geom_text(aes(label = label, vjust = label_vjust), size = 3) +
+    scale_fill_manual(values = c("Urban" = "#0067B9", "Rural" = "lightcoral")) +
+    scale_y_continuous(expand = expansion(mult = c(0.18, 0.18))) +
+    facet_wrap(~ category, scales = "free_y", nrow = 1) +
+    labs(title = paste0("Rural vs Urban Burden: ", results$scenario_label),
+         x = NULL,
+         y = NULL,
+         fill = NULL) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "top",
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks = element_blank(),
+      strip.background = element_blank(),
+      strip.text = element_text(size = 10)
+    )
+}
+
+make_dashboard <- function(results) {
+  dash <- as.data.frame(rbind(
+    round(results$OOP_med_additional, 0),
+    round(results$OOP_total_additional, 0),
+    round(results$che_10_additional, 0),
+    round(results$impov_additional, 0)
+  ))
+  colnames(dash) <- c("Urban", "Rural")
+  rownames(dash) <- c(
+    paste0("Additional Direct Medical OOP due to Intervention - ", results$scenario_label),
+    paste0("Additional Total OOP due to Intervention - ", results$scenario_label),
+    paste0("Additional CHE Cases (10% threshold) - ", results$scenario_label),
+    paste0("Change in Impoverishment Cases - ", results$scenario_label)
+  )
+  dash
+}
+
+library(ggplot2)
+
+results_0 <- calculate_sector_results(
+  coverage_med_dr_insured = 0,
+  coverage_med_vtdr_insured = 0,
+  scenario_label = "0% DR/VTDR Treatment Coverage"
+)
+results_100 <- calculate_sector_results(
+  coverage_med_dr_insured = 1,
+  coverage_med_vtdr_insured = 1,
+  scenario_label = "100% DR/VTDR Treatment Coverage"
+)
+
+print(make_dashboard(results_0))
+make_burden_plot(results_0)
+
+print(make_dashboard(results_100))
+make_burden_plot(results_100)

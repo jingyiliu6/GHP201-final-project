@@ -21,7 +21,7 @@ Method:
     - Use Level 01 multiplier as the household weight.
     - Prefer Level 15 visit == 3; if unavailable, average valid visits.
     - Do not sum consumption across visits.
-    - Construct sector-specific household-weighted quintiles by
+    - Construct combined rural-urban household-weighted quintiles by
       hh_usual_cons_exp_mnth.
     - Simulate 100,000 households by sampling observed households with
       replacement, proportional to household weight within sector.
@@ -140,17 +140,18 @@ drop _merge_level01_level15
 label define sector_lbl 1 "Rural" 2 "Urban", replace
 label values sector sector_lbl
 
-* Household-weighted quintiles within Rural and Urban.
-sort sector hh_usual_cons_exp_mnth hhid
-by sector: egen sector_weight = total(household_weight)
-by sector: gen cum_weight = sum(household_weight)
-gen weight_midpoint = (cum_weight - household_weight / 2) / sector_weight
+* Combined rural-urban household-weighted quintiles.
+sort hh_usual_cons_exp_mnth hhid
+egen total_household_weight = total(household_weight)
+gen cum_weight = sum(household_weight)
+gen weight_midpoint = ///
+    (cum_weight - household_weight / 2) / total_household_weight
 gen household_quintile = floor(5 * weight_midpoint) + 1
 replace household_quintile = 1 if household_quintile < 1
 replace household_quintile = 5 if household_quintile > 5
 
 label variable household_quintile ///
-    "Sector-specific household-weighted consumption quintile"
+    "Combined rural-urban household-weighted consumption quintile"
 
 save `analytic_hh'
 
@@ -270,8 +271,31 @@ label values sector sector_lbl
 label variable hh_size "Household size"
 label variable hh_usual_cons_exp_mnth "Monthly household consumption proxy"
 label variable household_quintile ///
-    "Sector-specific household-weighted consumption quintile"
+    "Combined rural-urban household-weighted consumption quintile"
 
 keep sector hh_size hh_usual_cons_exp_mnth household_quintile
 save "hces_simulated_100k_households.dta", replace
 export delimited using "hces_simulated_100k_households.csv", replace
+
+twoway ///
+    (kdensity hh_usual_cons_exp_mnth if sector == 1, ///
+        lcolor(navy) lwidth(medthick)) ///
+    (kdensity hh_usual_cons_exp_mnth if sector == 2, ///
+        lcolor(maroon) lwidth(medthick)), ///
+    legend(order(1 "Rural" 2 "Urban") rows(1) position(6)) ///
+    title("Smoothed Monthly Household Consumption Distribution") ///
+    xtitle("Monthly household consumption") ///
+    ytitle("Density") ///
+    note("Simulated 100,000 households; consumption proxy from hh_usual_cons_exp_mnth") ///
+    graphregion(color(white)) plotregion(color(white))
+
+graph export "hces_simulated_monthly_consumption_distribution.png", ///
+    replace width(2400)
+
+table sector household_quintile, ///
+    statistic(frequency) ///
+    statistic(mean hh_size) ///
+    statistic(mean hh_usual_cons_exp_mnth) ///
+    statistic(median hh_usual_cons_exp_mnth) ///
+    statistic(min hh_usual_cons_exp_mnth) ///
+    statistic(max hh_usual_cons_exp_mnth)
