@@ -5,7 +5,7 @@ set more off
 set seed 20260504
 
 /*
-Empirical weighted resampling of 100,000 households from HCES.
+Empirical weighted resampling of 1,000,000 households from HCES.
 
 Inputs:
     level_01.dta  Household sector and survey expansion weight
@@ -22,12 +22,14 @@ Method:
     - Prefer Level 15 visit == 3; if unavailable, average valid visits.
     - Do not sum consumption across visits.
     - Construct combined rural-urban household-weighted quintiles by
-      hh_usual_cons_exp_mnth.
-    - Simulate 100,000 households by sampling observed households with
+      equivalized monthly household consumption, defined as
+      hh_usual_cons_exp_mnth / sqrt(hh_size).
+    - Simulate 1,000,000 households by sampling observed households with
       replacement, proportional to household weight within sector.
 */
 
 local n_sim = 1000000
+local pov_daily_per_person = 3 * 20.42
 
 tempfile level01_hh level15_hh analytic_hh
 
@@ -140,8 +142,10 @@ drop _merge_level01_level15
 label define sector_lbl 1 "Rural" 2 "Urban", replace
 label values sector sector_lbl
 
-* Combined rural-urban household-weighted quintiles.
-sort hh_usual_cons_exp_mnth hhid
+* Combined rural-urban household-weighted quintiles using equivalized
+* household consumption to account for household size.
+gen double hh_equiv_cons_exp_mnth = hh_usual_cons_exp_mnth / sqrt(hh_size)
+sort hh_equiv_cons_exp_mnth hhid
 egen total_household_weight = total(household_weight)
 gen cum_weight = sum(household_weight)
 gen weight_midpoint = ///
@@ -151,17 +155,20 @@ replace household_quintile = 1 if household_quintile < 1
 replace household_quintile = 5 if household_quintile > 5
 
 label variable household_quintile ///
-    "Combined rural-urban household-weighted consumption quintile"
+    "Combined rural-urban household-weighted quintile by equivalized consumption"
+label variable hh_equiv_cons_exp_mnth ///
+    "Monthly household consumption proxy divided by square root of household size"
 
 save `analytic_hh'
 
 *-----------------------------------------------
-* Draw exactly 100,000 simulated households.
+* Draw exactly 1,000,000 simulated households.
 * Rural/Urban counts follow weighted household shares exactly up to rounding.
 * Within sector, households are sampled with replacement proportional to weight.
 *-----------------------------------------------
 use `analytic_hh', clear
-keep sector hh_size hh_usual_cons_exp_mnth household_weight household_quintile
+keep sector hh_size hh_usual_cons_exp_mnth hh_equiv_cons_exp_mnth ///
+    household_weight household_quintile
 
 mata:
 real scalar weighted_pick(real colvector cumw, real scalar u)
@@ -188,7 +195,7 @@ void simulate_households()
 {
     real scalar n_sim, total_weight, base_total, remainder_n
     real scalar s, k, n_s, draw_row, sampled_row, u, cum_total
-    real colvector sector, hh_size, hh_cons, weight, quintile
+    real colvector sector, hh_size, hh_cons, hh_equiv_cons, weight, quintile
     real colvector sectors, sector_weight, raw_n, n_by_sector, remainder
     real colvector idx, w_s, cumw
     real matrix out
@@ -198,6 +205,7 @@ void simulate_households()
     sector = st_data(., "sector")
     hh_size = st_data(., "hh_size")
     hh_cons = st_data(., "hh_usual_cons_exp_mnth")
+    hh_equiv_cons = st_data(., "hh_equiv_cons_exp_mnth")
     weight = st_data(., "household_weight")
     quintile = st_data(., "household_quintile")
 
@@ -225,7 +233,7 @@ void simulate_households()
         }
     }
 
-    out = J(n_sim, 4, .)
+    out = J(n_sim, 5, .)
     draw_row = 1
 
     for (s = 1; s <= 2; s++) {
@@ -248,7 +256,8 @@ void simulate_households()
             out[draw_row, 1] = sector[sampled_row]
             out[draw_row, 2] = hh_size[sampled_row]
             out[draw_row, 3] = hh_cons[sampled_row]
-            out[draw_row, 4] = quintile[sampled_row]
+            out[draw_row, 4] = hh_equiv_cons[sampled_row]
+            out[draw_row, 5] = quintile[sampled_row]
             draw_row = draw_row + 1
         }
     }
@@ -258,9 +267,10 @@ void simulate_households()
     stata("gen sector = .")
     stata("gen double hh_size = .")
     stata("gen double hh_usual_cons_exp_mnth = .")
+    stata("gen double hh_equiv_cons_exp_mnth = .")
     stata("gen household_quintile = .")
 
-    st_store(., ("sector", "hh_size", "hh_usual_cons_exp_mnth", "household_quintile"), out)
+    st_store(., ("sector", "hh_size", "hh_usual_cons_exp_mnth", "hh_equiv_cons_exp_mnth", "household_quintile"), out)
 }
 
 simulate_households()
@@ -268,14 +278,21 @@ end
 
 label define sector_lbl 1 "Rural" 2 "Urban", replace
 label values sector sector_lbl
+gen double hh_poverty_line_annual = ///
+    `pov_daily_per_person' * hh_size * 365
 label variable hh_size "Household size"
 label variable hh_usual_cons_exp_mnth "Monthly household consumption proxy"
+label variable hh_equiv_cons_exp_mnth ///
+    "Monthly household consumption proxy divided by square root of household size"
+label variable hh_poverty_line_annual ///
+    "Annual household poverty line: daily per-person line x household size x 365"
 label variable household_quintile ///
-    "Combined rural-urban household-weighted consumption quintile"
+    "Combined rural-urban household-weighted quintile by equivalized consumption"
 
-keep sector hh_size hh_usual_cons_exp_mnth household_quintile
-save "hces_simulated_100k_households.dta", replace
-export delimited using "hces_simulated_100k_households.csv", replace
+keep sector hh_size hh_usual_cons_exp_mnth hh_equiv_cons_exp_mnth ///
+    hh_poverty_line_annual household_quintile
+save "hces_simulated_1m_households.dta", replace
+export delimited using "hces_simulated_1m_households.csv", replace
 
 twoway ///
     (kdensity hh_usual_cons_exp_mnth if sector == 1, ///
@@ -286,7 +303,7 @@ twoway ///
     title("Smoothed Monthly Household Consumption Distribution") ///
     xtitle("Monthly household consumption") ///
     ytitle("Density") ///
-    note("Simulated 100,000 households; consumption proxy from hh_usual_cons_exp_mnth") ///
+    note("Simulated 1,000,000 households; consumption proxy from hh_usual_cons_exp_mnth") ///
     graphregion(color(white)) plotregion(color(white))
 
 graph export "hces_simulated_monthly_consumption_distribution.png", ///
@@ -296,6 +313,7 @@ table sector household_quintile, ///
     statistic(frequency) ///
     statistic(mean hh_size) ///
     statistic(mean hh_usual_cons_exp_mnth) ///
+    statistic(mean hh_equiv_cons_exp_mnth) ///
     statistic(median hh_usual_cons_exp_mnth) ///
     statistic(min hh_usual_cons_exp_mnth) ///
     statistic(max hh_usual_cons_exp_mnth)

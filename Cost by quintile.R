@@ -22,11 +22,18 @@ scale_to_target_pop <- get_val("target_pop") / get_val("pop")
 plain_number <- function(x) format(round(x, 0), scientific = FALSE, trim = TRUE)
 cost_label <- function(x) paste0("INR ", round(x / 1000000, 0), "M")
 
-required_hces_cols <- c("sector", "hh_size", "hh_usual_cons_exp_mnth", "household_quintile")
+required_hces_cols <- c("sector", "hh_size", "hh_usual_cons_exp_mnth")
 missing_hces_cols <- setdiff(required_hces_cols, names(hces))
 if (length(missing_hces_cols) > 0) {
   stop("Missing required columns in ", hces_file, ": ",
        paste(missing_hces_cols, collapse = ", "))
+}
+assign_equiv_quintile <- function(data) {
+  sort_order <- order(data$hh_equiv_cons_exp_mnth, seq_len(nrow(data)))
+  sorted_midpoint <- (seq_len(nrow(data)) - 0.5) / nrow(data)
+  quintile <- integer(nrow(data))
+  quintile[sort_order] <- floor(5 * sorted_midpoint) + 1
+  pmin(pmax(quintile, 1), 5)
 }
 
 hces$sector_raw <- trimws(as.character(hces$sector))
@@ -40,13 +47,24 @@ hces$sector_label <- factor(ifelse(hces$sector_code == "u", "Urban", "Rural"),
 hces$hh_size <- as.numeric(hces$hh_size)
 hces$hh_usual_cons_exp_mnth <- as.numeric(hces$hh_usual_cons_exp_mnth)
 hces$hh_consumption_annual <- hces$hh_usual_cons_exp_mnth * 12
-hces$household_quintile <- as.integer(hces$household_quintile)
+if ("hh_equiv_cons_exp_mnth" %in% names(hces)) {
+  hces$hh_equiv_cons_exp_mnth <- as.numeric(hces$hh_equiv_cons_exp_mnth)
+} else {
+  hces$hh_equiv_cons_exp_mnth <- hces$hh_usual_cons_exp_mnth / sqrt(hces$hh_size)
+}
+# Always derive the household poverty line from the current input table so the
+# model does not use a stale value stored in a previously generated cohort file.
+hces$hh_poverty_line_annual <- get_val("pov") * hces$hh_size * 365
 hces <- hces[!is.na(hces$sector_code) &
                !is.na(hces$hh_size) &
                hces$hh_size > 0 &
                !is.na(hces$hh_consumption_annual) &
                hces$hh_consumption_annual > 0 &
-               hces$household_quintile %in% quintiles, ]
+               !is.na(hces$hh_equiv_cons_exp_mnth) &
+               hces$hh_equiv_cons_exp_mnth > 0 &
+               !is.na(hces$hh_poverty_line_annual) &
+               hces$hh_poverty_line_annual > 0, ]
+hces$household_quintile <- assign_equiv_quintile(hces)
 
 if (nrow(hces) == 0) {
   stop("No valid simulated HCES households remain after cleaning.")
@@ -63,8 +81,12 @@ summarize_hces <- function(data, group_var, group_name) {
       mean_hh_size = round(mean(households$hh_size), 2),
       mean_monthly_consumption = round(mean(households$hh_usual_cons_exp_mnth), 0),
       median_monthly_consumption = round(median(households$hh_usual_cons_exp_mnth), 0),
+      mean_equiv_monthly_consumption = round(mean(households$hh_equiv_cons_exp_mnth), 0),
+      median_equiv_monthly_consumption = round(median(households$hh_equiv_cons_exp_mnth), 0),
       mean_annual_consumption = round(mean(households$hh_consumption_annual), 0),
-      median_annual_consumption = round(median(households$hh_consumption_annual), 0)
+      median_annual_consumption = round(median(households$hh_consumption_annual), 0),
+      mean_annual_poverty_line = round(mean(households$hh_poverty_line_annual), 0),
+      median_annual_poverty_line = round(median(households$hh_poverty_line_annual), 0)
     )
   }))
   rownames(summary) <- NULL
@@ -89,9 +111,9 @@ household_threshold_rate <- function(oop, households, threshold) {
   mean(oop > threshold * households$hh_consumption_annual)
 }
 
-household_impov_rate <- function(oop, households, poverty_line) {
-  mean(households$hh_consumption_annual >= poverty_line &
-         households$hh_consumption_annual - oop < poverty_line)
+household_impov_rate <- function(oop, households) {
+  mean(households$hh_consumption_annual >= households$hh_poverty_line_annual &
+         households$hh_consumption_annual - oop < households$hh_poverty_line_annual)
 }
 
 insured_med_oop <- function(oop_dr, oop_vtdr, vtdr_share,
@@ -136,7 +158,6 @@ direct_nonmed_OOP_inv <- treated_inv * sapply(quintiles, function(i) {
 
 households_q <- lapply(quintiles, get_hces_quintile)
 th1 <- get_val("th1")
-pov_annual <- get_val("pov") * 365
 
 calculate_quintile_results <- function(coverage_med_dr_insured,
                                        coverage_med_vtdr_insured,
@@ -208,10 +229,10 @@ calculate_quintile_results <- function(coverage_med_dr_insured,
     treated_baseline * che_10_rate_baseline
   
   impov_rate_baseline <- sapply(quintiles, function(i) {
-    household_impov_rate(per_person_oop_baseline[i], households_q[[i]], pov_annual)
+    household_impov_rate(per_person_oop_baseline[i], households_q[[i]])
   })
   impov_rate_inv <- sapply(quintiles, function(i) {
-    household_impov_rate(per_person_oop_inv[i], households_q[[i]], pov_annual)
+    household_impov_rate(per_person_oop_inv[i], households_q[[i]])
   })
   impov_additional <- treated_inv * impov_rate_inv -
     treated_baseline * impov_rate_baseline
