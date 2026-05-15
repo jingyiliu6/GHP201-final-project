@@ -268,7 +268,7 @@ make_che_plot <- function(results) {
   plot_che_q$label_vjust <- ifelse(plot_che_q$value >= 0, -0.35, 1.25)
   
   ggplot(plot_che_q, aes(x = quintile, y = value)) +
-    geom_col(fill = "#ffcc20", width = 0.6) +
+    geom_col(fill = "#f58220", width = 0.6) +
     geom_text(aes(label = label, vjust = label_vjust), size = 3) +
     scale_y_continuous(expand = expansion(mult = c(0.18, 0.18))) +
     labs(title = paste0("Additional CHE Cases (10%): ",
